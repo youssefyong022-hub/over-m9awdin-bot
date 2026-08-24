@@ -1,0 +1,14 @@
+{
+  "name": "over-m9awdin-bot",
+  "version": "2.0.0",
+  "description": "Epic Discord Bot for Over M9awdin",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "dotenv": "^16.4.5",
+    "sqlite3": "^5.1.7"
+  }
+}
