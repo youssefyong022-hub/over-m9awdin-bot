@@ -284,14 +284,13 @@ client.on('interactionCreate', async interaction => {
 
         const ticketEmbed = new EmbedBuilder()
             .setColor('#2b2d31')
-            .setTitle('📁 ── ❲ نظام التذاكر والدعم ❲ ──')
-            .setDescription('اختر القسم المناسب أدناه لفتح تذكرة خاصة مع فريق الإدارة.\n\n> ⚠️ **تنبيه:** يرجى عدم فتح أكثر من تذكرة في نفس الوقت لتجنب العقوبة.')
+            .setTitle('📁 Tickets')
+            .setDescription('Select a category to open a ticket. Please do not open a duplicate if you already have one open.')
             .addFields(
-                { name: '🛡️ Help', value: 'افتح هذه التذكرة إذا كنت تحتاج إلى مساعدة عامة داخل السيرفر.', inline: false },
-                { name: '⚔️ Server Abuse', value: 'افتح هذه التذكرة حصراً للإبلاغ عن أي إساءة أو تجاوز ضدك.', inline: false }
+                { name: '🛡️ Help', value: '— open if you need server help', inline: false },
+                { name: '⚔️ Server Abuse', value: '— open if someone abuse on you', inline: false }
             )
-            .setFooter({ text: 'OVER M9AWDIN • Support System', iconURL: client.user.displayAvatarURL() })
-            .setTimestamp();
+            .setFooter({ text: 'Opening a ticket creates a private channel with staff.', iconURL: client.user.displayAvatarURL() });
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
