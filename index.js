@@ -10,7 +10,6 @@ app.listen(port, () => {
     console.log(`Web server is listening on port ${port}`);
 });
 
-
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
@@ -123,7 +122,6 @@ client.on('interactionCreate', async interaction => {
 
     const { commandName } = interaction;
 
-    // 1. أمر البروفايل الفوري
     if (commandName === 'profile') {
         const targetUser = interaction.options.getUser('user') || interaction.user;
         const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
@@ -165,7 +163,6 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
-    // 2. أمر الرانك الفوري
     if (commandName === 'rank') {
         const targetUser = interaction.options.getUser('user') || interaction.user;
 
@@ -192,7 +189,6 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
-    // 3. أمر القوانين بالتصميم النصي العصري
     if (commandName === 'rules') {
         const rulesText = `
 ╭━━━ 🛡️ **[ OVER M9AWDIN - SERVER RULES ]** 🛡️ ━━━╮
@@ -229,7 +225,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: rulesText }).catch(() => { });
     }
 
-    // 4. أمر إعطاء الرتبة
     if (commandName === 'giverole') {
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
             return interaction.reply({ content: '❌ ليس لديك صلاحية لإدارة الرتب!', ephemeral: true });
@@ -255,7 +250,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [embed] }).catch(() => { });
     }
 
-    // 5. أمر سحب الرتبة
     if (commandName === 'removerole') {
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
             return interaction.reply({ content: '❌ ليس لديك صلاحية لإدارة الرتب!', ephemeral: true });
@@ -281,7 +275,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ embeds: [embed] }).catch(() => { });
     }
 
-    // 6. أمر إرسال لوحة التذاكر
     if (commandName === 'ticket') {
         if (!interaction.member.permissions.has('Administrator')) {
             return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -316,7 +309,6 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
     }
 
-    // 7. أمر لوحة الفحص الضخمة (Checker)
     if (commandName === 'checker') {
         if (!interaction.member.permissions.has('Administrator')) {
             return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -371,9 +363,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// تفاعل أزرار البوت والنوافذ التفاعلية
 client.on('interactionCreate', async interaction => {
-    // أ. تفاعل أزرار فتح التذاكر
     if (interaction.isButton() && (interaction.customId === 'create_ticket_help' || interaction.customId === 'create_ticket_abuse')) {
         await interaction.deferReply({ ephemeral: true });
 
@@ -429,7 +419,6 @@ client.on('interactionCreate', async interaction => {
         }
     }
 
-    // ب. تفاعل إغلاق التذكرة
     else if (interaction.isButton() && interaction.customId === 'close_ticket') {
         if (!interaction.member.permissions.has('ManageChannels')) {
             return interaction.reply({ content: '❌ فقط الإدارة يمكنها إغلاق التذكرة!', ephemeral: true });
@@ -445,7 +434,7 @@ client.on('interactionCreate', async interaction => {
         }, 5000);
     }
 
-    // ج. تفاعل زر فحص الغشاشين (فتح النافذة)
+    // زر فتح نافذة الشكوى (Check a user)
     else if (interaction.isButton() && interaction.customId === 'open_checker_modal') {
         const modal = new ModalBuilder()
             .setCustomId('checker_submission_modal')
@@ -454,7 +443,7 @@ client.on('interactionCreate', async interaction => {
         const userInput = new TextInputBuilder()
             .setCustomId('suspect_user_id')
             .setLabel('Player ID or Username')
-            .setPlaceholder('أدخل اسم أو آيدي اللاعب المشتبه به هنا...')
+            .setPlaceholder('أدخل اسم أو آيدي اللاعب المشتبه به...')
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
@@ -481,16 +470,94 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
     }
 
-    // د. استقبال بيانات نافذة فحص الغشاشين بعد إرسالها
+    // استقبال بيانات النافذة وإرسالها إلى غرفة خاصة للإدارة مع أزرار القرار
     else if (interaction.isModalSubmit() && interaction.customId === 'checker_submission_modal') {
         const suspect = interaction.fields.getTextInputValue('suspect_user_id');
         const platform = interaction.fields.getTextInputValue('suspect_platform');
         const reason = interaction.fields.getTextInputValue('suspect_reason') || 'No reason provided';
+        const reporter = interaction.user;
 
+        // إرسال رد مؤقت ومخفي للاعب الذي قام بالبلاغ
         await interaction.reply({
-            content: `🛡️ **تم تسجيل بلاغ الفحص بنجاح في النظام العسكري!**\n\n👤 **المشتبه به:** \`${suspect}\`\n💻 **المنصة:** \`${platform}\`\n📝 **الملاحظات:** \`${reason}\`\n\n⏳ *سيتم تحويل الملف إلى لجنة الفحص فوراً.*`,
+            content: `🛡️ **تم إرسال بلاغك بنجاح إلى لجنة الفحص!**\n\n👤 **المشتبه به:** \`${suspect}\`\n💻 **المنصة:** \`${platform}\``,
             ephemeral: true
         });
+
+        // ابحث عن قناة مخصصة للإدارة اسمها check-place-user أو أرسلها في نفس الروم (أو القناة الحالية إذا كنت تريدها لك وحدك)
+        const adminChannel = interaction.guild.channels.cache.find(c => c.name === 'check-place-user') || interaction.channel;
+
+        const reportEmbed = new EmbedBuilder()
+            .setColor('#ffaa00')
+            .setTitle('🚨 NEW PLAYER CHECK REPORT 🚨')
+            .addFields(
+                { name: '👤 المبلغ (Reporter)', value: `${reporter} (${reporter.username})`, inline: false },
+                { name: '🎯 المشتبه به (Suspect)', value: `\`${suspect}\``, inline: true },
+                { name: '💻 المنصة (Platform)', value: `\`${platform}\``, inline: true },
+                { name: '📝 الملاحظات', value: `\`${reason}\``, inline: false }
+            )
+            .setFooter({ text: 'DEBBABI CHEAT • Admin Control Panel', iconURL: client.user.displayAvatarURL() })
+            .setTimestamp();
+
+        // أزرار التحكم الإدارية (Clean, Cheater, Cancel, Kick)
+        const adminActionRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('check_clean')
+                .setLabel('Clean')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('🟢'),
+            new ButtonBuilder()
+                .setCustomId('check_cheater')
+                .setLabel('Cheater')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('🔴'),
+            new ButtonBuilder()
+                .setCustomId('check_cancel')
+                .setLabel('Cancel')
+                .setStyle(ButtonStyle.Secondary)
+                .setEmoji('❌'),
+            new ButtonBuilder()
+                .setCustomId('check_kick')
+                .setLabel('Kick User')
+                .setStyle(ButtonStyle.Danger)
+                .setEmoji('👢')
+        );
+
+        await adminChannel.send({
+            content: `📢 **تنبيه إداري جديد:** ${reporter} قام بالإبلاغ عن لاعب!`,
+            embeds: [reportEmbed],
+            components: [adminActionRow]
+        });
+    }
+
+    // معالجة أزرار الإدارة (Clean, Cheater, Cancel, Kick)
+    else if (interaction.isButton() && ['check_clean', 'check_cheater', 'check_cancel', 'check_kick'].includes(interaction.customId)) {
+        if (!interaction.member.permissions.has('Administrator')) {
+            return interaction.reply({ content: '❌ هذه الأزرار مخصصة للإدارة فقط!', ephemeral: true });
+        }
+
+        const action = interaction.customId;
+
+        if (action === 'check_clean') {
+            await interaction.update({
+                content: `🟢 **تم تحديد الحالة بواسطة ${interaction.user}: اللاعب نظيف (Clean)!**`,
+                components: []
+            });
+        } else if (action === 'check_cheater') {
+            await interaction.update({
+                content: `🔴 **تم تحديد الحالة بواسطة ${interaction.user}: ثبت أنه غشاش (Cheater)!**`,
+                components: []
+            });
+        } else if (action === 'check_cancel') {
+            await interaction.update({
+                content: `❌ **تم إلغاء البلاغ بواسطة ${interaction.user}.**`,
+                components: []
+            });
+        } else if (action === 'check_kick') {
+            await interaction.update({
+                content: `👢 **تم إغلاق البلاغ.** (تنبيه: لطرد العضو تأكد من كتابة الآيدي الصحيح أو سحبه يدوياً).`,
+                components: []
+            });
+        }
     }
 });
 
