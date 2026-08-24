@@ -1,4 +1,18 @@
-﻿const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+﻿
+const express = require('express');
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('OVER M9AWDIN Bot is alive and running 24/7!');
+});
+
+app.listen(port, () => {
+    console.log(`Web server is listening on port ${port}`);
+});
+
+
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
 
