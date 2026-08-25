@@ -41,7 +41,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
 )`);
 
 client.once('clientReady', async () => {
-    console.log(`Logged in as ${client.user.tag} (Elite Design Mode)`);
+    console.log(`Logged in as ${client.user.tag} (Elite Exact Design Mode)`);
 
     const commands = [
         new SlashCommandBuilder()
@@ -229,9 +229,9 @@ client.on('interactionCreate', async interaction => {
 
             const eliteCheckerEmbed = new EmbedBuilder()
                 .setColor('#2f3136')
-                .setTitle('🛡️ DEBBABI CHEAT — Player Check System')
-                .setDescription('Report suspicious players for verification.\n\n**How it works:**\n• Click **Check a user** → @tag a **server member** (must be in this server).\n• Choose if they play on **Phone** or **PC**.\n• Pay **50 points** to request a check.\n• If the player is a **cheater** → Your **50 points** are recovered and you get **+20 points** 🤌\n• If the player is **clean** → You lose **30 points** (check cost is not recovered).\n• If player is **already verified** → No charge.\n\nIf you catch 5 cheaters in a row you will be rewarded @Cheater Hunter\nA clean result resets your streak — you must get 5 consecutive cheaters.\n\nThink carefully before reporting!\n\n**Stats:**\n> 📊 `Pending: 0` | `Cheaters Found: 0` | `Clean: 0`')
-                .setImage('https://i.imgur.com/2Z091Wl.png') // رابط بانر احترافي مطابق للستايل المعدني
+                .setTitle(':profettionel_checker: Player Check System')
+                .setDescription('Report suspicious players for verification\n\n🚨 **How it works:**\n• Click **Check a user** → @tag a **server member** (must be in this server) :searchLyrics:\n• Choose if they play on **Phone** or **PC**\n• Pay **50 points** to request a check\n• If the player is a **cheater** → Your **50 points** are recovered and you get **+20 points** 🤌\n• If the player is **clean** → You lose **30 points** :03_reaper_p4radise: (check cost is not recovered)\n• If player is **already verified** → No charge.\n\n**If you catch 5 cheaters in a row you will be rewarded** @Cheater Hunter\nA clean result resets your streak — you must get 5 consecutive cheaters.\n\nThink carefully before reporting!\n**Stats:**\n> Pending: `1` | Cheaters Found: `7` | Clean: `5`')
+                .setImage('https://i.imgur.com/2Z091Wl.png')
                 .setFooter({ text: 'DEBBABI CHEAT • Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
                 .setTimestamp();
 
@@ -305,7 +305,7 @@ client.on('interactionCreate', async interaction => {
             }, 5000);
         }
 
-        // تفاعل زر Check a user لعرض القوائم المنسدلة العصرية بنفس ستايل الصورة
+        // تفاعل زر Check a user لعرض القوائم المنسدلة العصرية المطابقة للصورة تماماً
         else if (interaction.customId === 'open_checker_interactive') {
             activeCheckSessions.set(interaction.user.id, { suspectId: null, platform: null });
 
@@ -345,15 +345,13 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
-        // زر See my reports لعرض تقارير العضو
         else if (interaction.customId === 'view_my_reports') {
             await interaction.reply({
-                content: `📋 **سجل تقاريرك:** ليس لديك أي بلاغات سابقة حتى الآن يا بطل. استمر في حماية السيرفر!`,
+                content: `📋 **سجل تقاريرك:** ليس لديك أي بلاغات سابقة حتى الآن يا بطل.`,
                 ephemeral: true
             });
         }
 
-        // إرسال البلاغ لغرفة الإدارة
         else if (interaction.customId === 'submit_final_check') {
             const session = activeCheckSessions.get(interaction.user.id);
 
