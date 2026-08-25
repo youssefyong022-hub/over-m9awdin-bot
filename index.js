@@ -1594,71 +1594,44 @@ client.on('interactionCreate', async interaction => {
                 const isParticipant = allPlayers.includes(interaction.user.id);
                 const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
 
-                // 1 & 2. تصويت MVP Winners و MVP Losers معاً في لوحة تصويت موحدة وشاملة
-                if (selectedAction === 'mvp_winners' || selectedAction === 'mvp_losers') {
+                // 1. تصويت MVP Winners (المرحلة الأولى من التصويت المتسلسل)
+                if (selectedAction === 'mvp_winners') {
                     if (!isParticipant && !isAdmin) {
                         return interaction.editReply({ content: '❌ فقط المشاركون في المباراة أو الإدارة يمكنهم التصويت!' });
                     }
 
-                    const team1Options = match.team1.map(uid => {
-                        const m = interaction.guild.members.cache.get(uid);
-                        const name = m ? m.displayName : uid;
-                        return { label: `Team 1 Won: ${name}`, value: `t1_mvp_${uid}`, emoji: '🔴' };
-                    });
+                    match.winnerVotes = new Map();
+                    match.loserVotes = new Map();
+                    match.winnerVotingConcluded = false;
+                    match.votingCompleted = false;
 
-                    const team2Options = match.team2.map(uid => {
-                        const m = interaction.guild.members.cache.get(uid);
-                        const name = m ? m.displayName : uid;
-                        return { label: `Team 2 Won: ${name}`, value: `t2_mvp_${uid}`, emoji: '🟢' };
-                    });
-
-                    const allLoserOptions = allPlayers.map(uid => {
-                        const m = interaction.guild.members.cache.get(uid);
-                        const name = m ? m.displayName : uid;
-                        const isT1 = match.team1.includes(uid);
-                        return { label: `${isT1 ? 'Team 1' : 'Team 2'}: ${name}`, value: `loser_mvp_${uid}`, emoji: isT1 ? '🔴' : '🟢' };
-                    });
-
-                    const winnerSelect = new StringSelectMenuBuilder()
-                        .setCustomId(`select_winner_player_${matchId}`)
-                        .setPlaceholder('🏆 1. اختر الفريق الفائز والـ MVP الفائز...')
-                        .addOptions([...team1Options, ...team2Options]);
-
-                    const loserSelect = new StringSelectMenuBuilder()
-                        .setCustomId(`select_loser_player_${matchId}`)
-                        .setPlaceholder('🎖️ 2. اختر الـ MVP الخاسر / Top Killer...')
-                        .addOptions(allLoserOptions);
-
-                    let reqWin = 3;
-                    let reqLoser = 2;
-                    if (allPlayers.length >= 8) { reqWin = 5; reqLoser = 4; }
-                    else if (allPlayers.length >= 6) { reqWin = 4; reqLoser = 3; }
-
-                    const voteEmbed = new EmbedBuilder()
-                        .setColor('#00ff88')
-                        .setTitle(`🗳️ لوحة التصويت الرسمية للمباراة (${match.mode})`)
-                        .setDescription(
-                            `قام ${interaction.user} بفتح التصويت الرسمي للمباراة!\n\n` +
-                            `📌 **يجب على اللاعبين التصويت في القائمتين أدناه لإغلاق الروم وحفظ النقاط:**\n` +
-                            `1️⃣ **القائمة الأولى (الفائز):** اختر الفريق الفائز والـ MVP الفائز (+80 نقطة) 🏆\n` +
-                            `2️⃣ **القائمة الثانية (الخاسر):** اختر أفضل أداء في الفريق الخاسر Top Killer (+30 نقطة) 🎖️\n\n` +
-                            `⚖️ **الأصوات المطلوبة لحسم النتيجة:**\n` +
-                            `• تصويت الفوز: **${reqWin}** أصوات\n` +
-                            `• تصويت الـ MVP الخاسر: **${reqLoser}** أصوات\n\n` +
-                            `🔒 **تنبيه:** لن يتم إنهاء المباراة وإغلاق الروم إلا بعد اكتمال التصويت على الفائز والخاسر معاً!`
-                        )
-                        .setFooter({ text: 'Apostado Dual Voting System' })
-                        .setTimestamp();
+                    const winnerSelect = buildWinnerSelectMenu(match, interaction.guild);
 
                     await interaction.channel.send({
-                        embeds: [voteEmbed],
-                        components: [
-                            new ActionRowBuilder().addComponents(winnerSelect),
-                            new ActionRowBuilder().addComponents(loserSelect)
-                        ]
+                        content: `**Mvp winner vote :**\n${allPlayers.map(uid => `<@${uid}>`).join(' ')}`,
+                        components: [new ActionRowBuilder().addComponents(winnerSelect)]
                     });
 
-                    return interaction.editReply({ content: '✅ تم إرسال لوحة التصويت المزدوجة (الفائز + الخاسر) في الشات ليصوت الجميع الآن!' });
+                    return interaction.editReply({ content: '✅ تم فتح تصويت الـ MVP للفريق الفائز بنجاح!' });
+                }
+
+                // 2. تصويت MVP Losers (إذا أراد أحد فتحه يدوياً)
+                if (selectedAction === 'mvp_losers') {
+                    if (!isParticipant && !isAdmin) {
+                        return interaction.editReply({ content: '❌ فقط المشاركون في المباراة أو الإدارة يمكنهم التصويت!' });
+                    }
+
+                    if (!match.winningTeam) {
+                        return interaction.editReply({ content: '⚠️ يجب التصويت على الفريق الفائز أولاً (MVP Winners) لتحديد الفريق الخاسر!' });
+                    }
+
+                    const loserSelect = buildLoserSelectMenu(match, interaction.guild);
+                    await interaction.channel.send({
+                        content: `**Mvp loser vote :**\n${allPlayers.map(uid => `<@${uid}>`).join(' ')}`,
+                        components: [new ActionRowBuilder().addComponents(loserSelect)]
+                    });
+
+                    return interaction.editReply({ content: '✅ تم فتح تصويت الـ MVP للفريق الخاسر بنجاح!' });
                 }
 
                 // 3. طلب مساعدة الإدارة Call Staff
@@ -1676,6 +1649,7 @@ client.on('interactionCreate', async interaction => {
                     }
                     match.winnerVotes.clear();
                     match.loserVotes.clear();
+                    match.winnerVotingConcluded = false;
                     match.votingCompleted = false;
                     saveMatchToDb(match);
                     await interaction.channel.send({ content: `🔄 **تمت إعادة تعيين جميع أصوات المباراة بواسطة ${interaction.user}.**` });
@@ -1696,107 +1670,250 @@ client.on('interactionCreate', async interaction => {
                     }, 5000);
                     return interaction.editReply({ content: '✅ تم إلغاء المباراة وإغلاق الروم.' });
                 }
-            }
 
-            // استقبال صوت الفائز والـ MVP (نظام التصويت الكامل)
-            if (customId.startsWith('select_winner_player_')) {
-                await interaction.deferReply({ ephemeral: true });
-
-                const matchId = customId.split('_')[3];
-                const match = activeMatches.get(matchId);
-                const selectedVal = values[0];
-
-                if (!match) return interaction.editReply({ content: '❌ المباراة غير نشطة.' });
-
-                const isT1Winner = selectedVal.startsWith('t1_mvp_');
-                const mvpUid = selectedVal.replace('t1_mvp_', '').replace('t2_mvp_', '');
-                const voterId = interaction.user.id;
-
-                match.winnerVotes.set(voterId, {
-                    voterTeam: match.team1.includes(voterId) ? 1 : 2,
-                    winningTeam: isT1Winner ? 'Team 1' : 'Team 2',
-                    mvpUid: mvpUid
-                });
-                saveMatchToDb(match);
-
-                const allPlayers = [...match.team1, ...match.team2];
-                const totalPlayers = allPlayers.length;
-
-                // حساب الأصوات الحالية والمصوتين
-                let t1Votes = 0;
-                let t2Votes = 0;
-                const t1Voters = [];
-                const t2Voters = [];
-
-                for (const [uid, v] of match.winnerVotes.entries()) {
-                    if (v.winningTeam === 'Team 1') {
-                        t1Votes++;
-                        t1Voters.push(uid);
-                    } else if (v.winningTeam === 'Team 2') {
-                        t2Votes++;
-                        t2Voters.push(uid);
-                    }
+                // 6. الإبلاغ عن خطأ Report Bug
+                if (selectedAction === 'report_bug') {
+                    return interaction.editReply({ content: '🚨 **للإبلاغ عن خطأ أو مشكلة تقنية:** يرجى فتح تذكرة عبر قسم الدعم الفني أو التواصل مع طاقم الإدارة مباشرة.' });
                 }
 
-                await interaction.editReply({ 
-                    content: `✅ تم تسجيل تصويتك لـ **${isT1Winner ? 'Team 1' : 'Team 2'}** والـ MVP <@${mvpUid}> بنجاح!`
-                });
+                // 7. إلغاء المباراة Cancel Match
+                if (selectedAction === 'cancel_match_request') {
+                    const cancelConfirmRow = new ActionRowBuilder().addComponents(
+                        new ButtonBuilder().setCustomId(`confirm_cancel_match_${matchId}`).setLabel('Confirm Cancel').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`keep_match_${matchId}`).setLabel('Keep Match').setStyle(ButtonStyle.Secondary)
+                    );
+                    await interaction.channel.send({
+                        content: `⚠️ **طلب إلغاء المباراة:** بدأ ${interaction.user} طلباً لإلغاء المباراة. هل تؤكد الإلغاء؟`,
+                        components: [cancelConfirmRow]
+                    });
+                    return interaction.editReply({ content: '✅ تم إرسال لوحة تأكيد إلغاء المباراة في الشات.' });
+                }
+            }
 
-                // إرسال تحديث علني في الشات يراه الجميع
-                const liveVoteEmbed = new EmbedBuilder()
-                    .setColor('#00ff88')
-                    .setTitle('📊 تحديث أصوات الفوز (Win Votes Update)')
-                    .setDescription(
-                        `🗳️ قام <@${voterId}> بالتصويت لـ **${isT1Winner ? '🔴 Team 1' : '🟢 Team 2'}** (MVP: <@${mvpUid}>)\n\n` +
-                        `🔴 **Team 1:** \`${t1Votes}\` أصوات (${t1Voters.map(u => `<@${u}>`).join(', ') || '*لا أصوات بعد*'})\n` +
-                        `🟢 **Team 2:** \`${t2Votes}\` أصوات (${t2Voters.map(u => `<@${u}>`).join(', ') || '*لا أصوات بعد*'})\n\n` +
-                        `📈 **إجمالي أصوات الفوز المسجلة:** \`${match.winnerVotes.size}/${totalPlayers}\` صوت`
-                    )
-                    .setFooter({ text: 'Apostado Voting System' })
-                    .setTimestamp();
+            // استقبال صوت الفائز والـ MVP (المرحلة 1)
+            if (customId.startsWith('vote_winner_mvp_select_')) {
+                const matchId = customId.split('_')[4];
+                const match = activeMatches.get(matchId);
+                if (!match) return interaction.reply({ content: '❌ المباراة غير نشطة.', ephemeral: true });
 
-                await interaction.channel.send({ embeds: [liveVoteEmbed] });
+                const voterId = interaction.user.id;
+                const allPlayers = [...match.team1, ...match.team2];
+                const isParticipant = allPlayers.includes(voterId);
+                const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
 
-                // التحقق مما إذا كان كلا التصويتين (Win + Loser) قد اكتملا
-                await checkAndConcludeMatch(match, interaction.channel, interaction.guild, interaction);
+                if (!isParticipant && !isAdmin) {
+                    return interaction.reply({ content: '❌ فقط المشاركون في المباراة يمكنهم التصويت!', ephemeral: true });
+                }
+
+                if (match.winnerVotes.has(voterId)) {
+                    return interaction.reply({ content: '❌ You have already voted for MVP winner! Waiting for other voters.', ephemeral: true });
+                }
+
+                const candidateId = values[0].replace('win_cand_', '');
+                const isT1 = match.team1.includes(candidateId);
+                match.winnerVotes.set(voterId, { candidateId, team: isT1 ? 1 : 2 });
+                saveMatchToDb(match);
+
+                await interaction.reply({ content: '✅ You have voted for MVP winner!', ephemeral: true });
+
+                // تحديث قائمة التصويت في نفس الرسالة
+                try {
+                    const updatedSelect = buildWinnerSelectMenu(match, interaction.guild);
+                    await interaction.message.edit({
+                        components: [new ActionRowBuilder().addComponents(updatedSelect)]
+                    });
+                } catch (e) {}
+
+                // التحقق من اكتمال الأصوات
+                let reqVotes = 2;
+                if (match.teamSize >= 4) reqVotes = 4;
+                else if (match.teamSize >= 3) reqVotes = 3;
+                else reqVotes = 2;
+
+                const totalVoted = match.winnerVotes.size;
+                if (totalVoted >= reqVotes || totalVoted >= allPlayers.length || isAdmin) {
+                    if (match.winnerVotingConcluded) return;
+                    match.winnerVotingConcluded = true;
+
+                    // تحديد اللاعب الأكثر أصواتاً
+                    const candidateCounts = {};
+                    for (const v of match.winnerVotes.values()) {
+                        candidateCounts[v.candidateId] = (candidateCounts[v.candidateId] || 0) + 1;
+                    }
+                    let topCandidate = candidateId;
+                    let maxVotes = 0;
+                    for (const [cId, count] of Object.entries(candidateCounts)) {
+                        if (count > maxVotes) {
+                            maxVotes = count;
+                            topCandidate = cId;
+                        }
+                    }
+
+                    match.winningMvpUid = topCandidate;
+                    match.winningTeam = match.team1.includes(topCandidate) ? 1 : 2;
+                    saveMatchToDb(match);
+
+                    const votersMentions = Array.from(match.winnerVotes.keys()).map(id => `<@${id}>`).join(', ');
+
+                    const winnerSelectedEmbed = new EmbedBuilder()
+                        .setColor('#2b2d31')
+                        .setTitle('👾 MVP Winners Selected!')
+                        .setDescription(
+                            `Winner: <@${match.winningMvpUid}>\n\n` +
+                            `+80 MVP point(s) will be awarded after both MVPs are selected.\n\n` +
+                            `📊 Total Votes: ${totalVoted}/${reqVotes}\n` +
+                            `✅ Voters: ${votersMentions}`
+                        );
+
+                    await interaction.channel.send({ embeds: [winnerSelectedEmbed] });
+                    await interaction.channel.send({
+                        content: `👾 **MVP Winners Selected!**\n\n<@${match.winningMvpUid}> has been voted as MVP Winners.\nMVP points will be awarded after **both** MVPs are selected.`
+                    });
+
+                    // الانتقال التلقائي الفوري لتصويت الـ MVP الخاسر (Mvp loser vote)
+                    const loserSelect = buildLoserSelectMenu(match, interaction.guild);
+                    await interaction.channel.send({
+                        content: `**Mvp loser vote :**\n${allPlayers.map(uid => `<@${uid}>`).join(' ')}`,
+                        components: [new ActionRowBuilder().addComponents(loserSelect)]
+                    });
+                    saveMatchToDb(match);
+                }
                 return;
             }
 
-            // استقبال اختيار MVP الخاسر (Top Killer)
-            if (customId.startsWith('select_loser_player_')) {
-                await interaction.deferReply({ ephemeral: true });
-
-                const matchId = customId.split('_')[3];
+            // استقبال صوت MVP الخاسر (المرحلة 2)
+            if (customId.startsWith('vote_loser_mvp_select_')) {
+                const matchId = customId.split('_')[4];
                 const match = activeMatches.get(matchId);
-                const selectedVal = values[0];
-                const mvpLoserUid = selectedVal.replace('loser_mvp_', '');
+                if (!match) return interaction.reply({ content: '❌ المباراة غير نشطة.', ephemeral: true });
 
-                if (!match) return interaction.editReply({ content: '❌ المباراة غير نشطة.' });
+                const voterId = interaction.user.id;
+                const allPlayers = [...match.team1, ...match.team2];
+                const isParticipant = allPlayers.includes(voterId);
+                const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
 
-                match.loserVotes.set(interaction.user.id, mvpLoserUid);
+                if (!isParticipant && !isAdmin) {
+                    return interaction.reply({ content: '❌ فقط المشاركون في المباراة يمكنهم التصويت!', ephemeral: true });
+                }
+
+                if (match.loserVotes.has(voterId)) {
+                    return interaction.reply({ content: '❌ You have already voted for MVP loser! Waiting for other voters.', ephemeral: true });
+                }
+
+                const candidateId = values[0].replace('loser_cand_', '');
+                match.loserVotes.set(voterId, candidateId);
                 saveMatchToDb(match);
 
-                const allPlayers = [...match.team1, ...match.team2];
-                const totalPlayers = allPlayers.length;
+                await interaction.reply({ content: '✅ You have voted for MVP loser!', ephemeral: true });
 
-                await interaction.editReply({ content: `🎖️ تم تسجيل تصويتك لـ MVP الفريق الخاسر: <@${mvpLoserUid}>!` });
+                // تحديث قائمة التصويت في نفس الرسالة
+                try {
+                    const updatedSelect = buildLoserSelectMenu(match, interaction.guild);
+                    await interaction.message.edit({
+                        components: [new ActionRowBuilder().addComponents(updatedSelect)]
+                    });
+                } catch (e) {}
 
-                // إرسال إشعار علني في الروم يراه الجميع
-                const loserLiveEmbed = new EmbedBuilder()
-                    .setColor('#ffaa00')
-                    .setTitle('🎖️ تحديث أصوات الـ MVP الخاسر (Top Killer)')
-                    .setDescription(
-                        `🗳️ قام <@${interaction.user.id}> بالتصويت لـ MVP الخاسر: <@${mvpLoserUid}>\n\n` +
-                        `📈 **إجمالي أصوات الـ MVP الخاسر المسجلة:** \`${match.loserVotes.size}/${totalPlayers}\` صوت`
-                    )
-                    .setFooter({ text: 'Apostado Voting System' })
-                    .setTimestamp();
+                let reqVotes = 2;
+                if (match.teamSize >= 4) reqVotes = 4;
+                else if (match.teamSize >= 3) reqVotes = 3;
+                else reqVotes = 2;
 
-                await interaction.channel.send({ embeds: [loserLiveEmbed] });
+                const totalVoted = match.loserVotes.size;
+                if (totalVoted >= reqVotes || totalVoted >= allPlayers.length || isAdmin) {
+                    if (match.votingCompleted) return;
+                    match.votingCompleted = true;
 
-                // التحقق مما إذا كان كلا التصويتين (Win + Loser) قد اكتملا
-                await checkAndConcludeMatch(match, interaction.channel, interaction.guild, interaction);
+                    const loserCounts = {};
+                    for (const candId of match.loserVotes.values()) {
+                        loserCounts[candId] = (loserCounts[candId] || 0) + 1;
+                    }
+                    let topLoser = candidateId;
+                    let maxLoserVotes = 0;
+                    for (const [cId, count] of Object.entries(loserCounts)) {
+                        if (count > maxLoserVotes) {
+                            maxLoserVotes = count;
+                            topLoser = cId;
+                        }
+                    }
+                    match.losingMvpUid = topLoser;
+                    saveMatchToDb(match);
+
+                    const loserVotersMentions = Array.from(match.loserVotes.keys()).map(id => `<@${id}>`).join(', ');
+
+                    const loserSelectedEmbed = new EmbedBuilder()
+                        .setColor('#2b2d31')
+                        .setTitle('🔴 MVP Losers Selected!')
+                        .setDescription(
+                            `Winner: <@${match.losingMvpUid}>\n\n` +
+                            `+30 MVP point(s) will be awarded after both MVPs are selected.\n\n` +
+                            `📊 Total Votes: ${totalVoted}/${reqVotes}\n` +
+                            `✅ Voters: ${loserVotersMentions}`
+                        );
+
+                    await interaction.channel.send({ embeds: [loserSelectedEmbed] });
+                    await interaction.channel.send({
+                        content: `🔴 **MVP Losers Selected!**\n\n<@${match.losingMvpUid}> has been voted as MVP Losers.\nMVP points will be awarded after **both** MVPs are selected.`
+                    });
+
+                    // 3. إرسال GAME OVER EMBED النهائي وتوزيع النقاط
+                    const winningPlayers = match.winningTeam === 1 ? match.team1 : match.team2;
+                    const losingPlayers = match.winningTeam === 1 ? match.team2 : match.team1;
+                    const winningTeamName = match.winningTeam === 1 ? 'Team 1' : 'Team 2';
+                    const losingTeamName = match.winningTeam === 1 ? 'Team 2' : 'Team 1';
+
+                    await updateMatchStats(interaction.guild.id, winningPlayers, losingPlayers, match.winningMvpUid, match.losingMvpUid, match.hostId);
+
+                    const gameOverEmbed = new EmbedBuilder()
+                        .setColor('#2b2d31')
+                        .setTitle('🎮 GAME OVER - All MVPs Selected!')
+                        .setDescription(
+                            `🏆 **MVP Winners**\n<@${match.winningMvpUid}> (+80 points)\n\n` +
+                            `🎯 **MVP Losers**\n<@${match.losingMvpUid}> (+30 points)\n\n` +
+                            `✅ **Winners (${winningTeamName})**\n${winningPlayers.map(id => `<@${id}>`).join(' , ')}\nEach player received **+50 Win point!**\n\n` +
+                            `❌ **Losers (${losingTeamName})**\n${losingPlayers.map(id => `<@${id}>`).join(' , ')}\nEach player received **-30 Lose point.**\n\n` +
+                            `*Moving players back to original channels...*`
+                        )
+                        .setFooter({ text: 'Apostado Manager' })
+                        .setTimestamp();
+
+                    await interaction.channel.send({ embeds: [gameOverEmbed] });
+
+                    // إعادة اللاعبين للغرف الصوتية
+                    await returnPlayersToWaiting(interaction.guild, match);
+
+                    activeMatches.delete(match.id);
+                    removeMatchFromDb(match.id);
+
+                    // إغلاق وحذف الروم / الـ Thread بعد 15 ثانية
+                    setTimeout(async () => {
+                        try {
+                            await interaction.channel.delete('Match finished and concluded.');
+                        } catch (e) {}
+                    }, 15000);
+                }
                 return;
+            }
+
+            // تأكيد إلغاء المباراة
+            if (customId.startsWith('confirm_cancel_match_')) {
+                const matchId = customId.split('_')[3];
+                const match = activeMatches.get(matchId);
+                if (!match) return interaction.reply({ content: '❌ المباراة غير نشطة.', ephemeral: true });
+
+                activeMatches.delete(matchId);
+                removeMatchFromDb(matchId);
+
+                await interaction.reply({ content: `🛑 **تم إلغاء المباراة رسمياً بناءً على طلب اللاعبين.**\n🔒 سيتم إعادة الجميع وحذف الروم خلال 5 ثوانٍ...` });
+                await returnPlayersToWaiting(interaction.guild, match);
+                setTimeout(async () => {
+                    try { await interaction.channel.delete(); } catch (e) {}
+                }, 5000);
+                return;
+            }
+
+            if (customId.startsWith('keep_match_')) {
+                return interaction.reply({ content: '✅ تم التراجع عن الإلغاء والاستمرار في المباراة.', ephemeral: true });
             }
 
             if (customId === 'select_suspect_platform') {
@@ -1822,135 +1939,70 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
-// التحقق الدقيق من اكتمال تصويت الـ Win والـ Loser لجميع اللاعبين قبل إغلاق الروم
-async function checkAndConcludeMatch(match, channel, guild, interaction) {
-    if (!match || match.votingCompleted) return;
-
-    const allPlayers = [...match.team1, ...match.team2];
-    const totalPlayers = allPlayers.length; // e.g. 4 in 2v2 (2 from T1, 2 from T2)
-    
-    const winVotesCount = match.winnerVotes.size;
-    const loserVotesCount = match.loserVotes.size;
-
-    // حساب أصوات الفريقين الحالية
-    let t1Votes = 0;
-    let t2Votes = 0;
-    const mvpCounts = {};
-    for (const [uid, v] of match.winnerVotes.entries()) {
-        if (v.winningTeam === 'Team 1') t1Votes++;
-        else if (v.winningTeam === 'Team 2') t2Votes++;
-        mvpCounts[v.mvpUid] = (mvpCounts[v.mvpUid] || 0) + 1;
+// دالة بناء قائمة تصويت الفائز (CHOSE THE MVP - Stage 1)
+function buildWinnerSelectMenu(match, guild) {
+    const counts = {};
+    for (const v of match.winnerVotes.values()) {
+        counts[v.candidateId] = (counts[v.candidateId] || 0) + 1;
     }
 
-    const loserCounts = {};
-    for (const lUid of match.loserVotes.values()) {
-        loserCounts[lUid] = (loserCounts[lUid] || 0) + 1;
+    const t1Opts = match.team1.map(uid => {
+        const m = guild.members.cache.get(uid);
+        const name = m ? m.displayName : uid;
+        const vCount = counts[uid] || 0;
+        return {
+            label: `${name} (${vCount} votes)`,
+            description: 'Team 1',
+            value: `win_cand_${uid}`,
+            emoji: '🔴'
+        };
+    });
+
+    const t2Opts = match.team2.map(uid => {
+        const m = guild.members.cache.get(uid);
+        const name = m ? m.displayName : uid;
+        const vCount = counts[uid] || 0;
+        return {
+            label: `${name} (${vCount} votes)`,
+            description: 'Team 2',
+            value: `win_cand_${uid}`,
+            emoji: '🟢'
+        };
+    });
+
+    return new StringSelectMenuBuilder()
+        .setCustomId(`vote_winner_mvp_select_${match.id}`)
+        .setPlaceholder('CHOSE THE MVP')
+        .addOptions([...t1Opts, ...t2Opts]);
+}
+
+// دالة بناء قائمة تصويت الخاسر (CHOSE THE MVP - Stage 2)
+function buildLoserSelectMenu(match, guild) {
+    const losingPlayers = match.winningTeam === 1 ? match.team2 : match.team1;
+    const losingTeamLabel = match.winningTeam === 1 ? 'Team 2' : 'Team 1';
+    const losingEmoji = match.winningTeam === 1 ? '🟢' : '🔴';
+
+    const counts = {};
+    for (const candId of match.loserVotes.values()) {
+        counts[candId] = (counts[candId] || 0) + 1;
     }
 
-    const isAdmin = interaction?.member?.permissions?.has(PermissionFlagsBits.ManageGuild);
+    const opts = losingPlayers.map(uid => {
+        const m = guild.members.cache.get(uid);
+        const name = m ? m.displayName : uid;
+        const vCount = counts[uid] || 0;
+        return {
+            label: `${name} (${vCount} votes)`,
+            description: losingTeamLabel,
+            value: `loser_cand_${uid}`,
+            emoji: losingEmoji
+        };
+    });
 
-    // تحديد عدد الأصوات المطلوبة بدقة لكل طور:
-    // 2v2 (4 لاعبين): مطلوب 3 أصوات للفوز، و 2 للخاسر
-    // 3v3 (6 لاعبين): مطلوب 4 أصوات للفوز، و 3 للخاسر
-    // 4v4 (8 لاعبين): مطلوب 5 أصوات للفوز، و 4 للخاسر
-    let reqWin = 3;
-    let reqLoser = 2;
-    if (totalPlayers >= 8) { // 4v4
-        reqWin = 5;
-        reqLoser = 4;
-    } else if (totalPlayers >= 6) { // 3v3
-        reqWin = 4;
-        reqLoser = 3;
-    } else { // 2v2
-        reqWin = 3;
-        reqLoser = 2;
-    }
-
-    const isWinComplete = winVotesCount >= reqWin || (t1Votes >= reqWin || t2Votes >= reqWin) || winVotesCount >= totalPlayers;
-    const isLoserComplete = loserVotesCount >= reqLoser || loserVotesCount >= totalPlayers;
-
-    if ((isWinComplete && isLoserComplete) || isAdmin) {
-        match.votingCompleted = true;
-        activeMatches.delete(match.id);
-        removeMatchFromDb(match.id);
-
-        const finalWinningTeamName = t1Votes >= t2Votes ? 'Team 1' : 'Team 2';
-        const isFinalT1 = finalWinningTeamName === 'Team 1';
-        const winningPlayers = isFinalT1 ? match.team1 : match.team2;
-        const losingPlayers = isFinalT1 ? match.team2 : match.team1;
-
-        // تحديد MVP الفائز بالأكثر أصواتاً
-        let finalMvpWinner = winningPlayers[0];
-        let maxMvpVotes = -1;
-        for (const candidate of winningPlayers) {
-            const count = mvpCounts[candidate] || 0;
-            if (count > maxMvpVotes) {
-                maxMvpVotes = count;
-                finalMvpWinner = candidate;
-            }
-        }
-
-        // تحديد MVP الخاسر بالأكثر أصواتاً
-        let finalMvpLoser = losingPlayers[0] || null;
-        let maxLoserVotes = -1;
-        for (const candidate of losingPlayers) {
-            const count = loserCounts[candidate] || 0;
-            if (count > maxLoserVotes) {
-                maxLoserVotes = count;
-                finalMvpLoser = candidate;
-            }
-        }
-
-        // تحديث الإحصائيات في قاعدة البيانات (+80 MVP Winner, +50 Winner Squad, +30 MVP Loser, -30 Loser Squad)
-        await updateMatchStats(guild.id, winningPlayers, losingPlayers, finalMvpWinner, finalMvpLoser, match.hostId);
-
-        const otherWinners = winningPlayers.filter(id => id !== finalMvpWinner);
-        const otherLosers = losingPlayers.filter(id => id !== finalMvpLoser);
-
-        const winEmbed = new EmbedBuilder()
-            .setColor(0x00FF00)
-            .setTitle('🏆 MATCH CONCLUDED & STATS SAVED!')
-            .setDescription(
-                `🎉 **الفريق الفائز:** **${finalWinningTeamName}** (${Math.max(t1Votes, t2Votes)} أصوات)\n\n` +
-                `🌟 **MVP الفائز (+80 نقطة):** <@${finalMvpWinner}>\n` +
-                `👥 **أعضاء الفريق الفائز (+50 نقطة لكل لاعب):** ${otherWinners.map(id => `<@${id}>`).join(', ') || '<@' + finalMvpWinner + '>'}\n\n` +
-                `🎖️ **MVP الخاسر / Top Killer (+30 نقطة):** ${finalMvpLoser ? `<@${finalMvpLoser}>` : '*لم يتم اختياره*'}\n` +
-                `🔻 **باقي الفريق الخاسر (-30 نقطة لكل لاعب):** ${otherLosers.map(id => `<@${id}>`).join(', ') || '*لا يوجد*'}\n\n` +
-                `📊 **تفاصيل الأصوات النهائية:**\n` +
-                `• **تصويت الفوز:** Team 1 (${t1Votes}) | Team 2 (${t2Votes}) — (المسجل: ${winVotesCount}/${reqWin})\n` +
-                `• **تصويت الـ MVP الخاسر:** (${loserVotesCount}/${reqLoser}) أصوات مسجلة\n\n` +
-                `🔄 **جاري إعادة جميع اللاعبين إلى غرف الانتظار (waiting)...**\n` +
-                `🔒 **سيتم إغلاق وحذف هذه الغرفة المؤقتة خلال 15 ثانية...**`
-            )
-            .setFooter({ text: 'Apostado Manager System' })
-            .setTimestamp();
-
-        await channel.send({ embeds: [winEmbed] });
-
-        // إعادة جميع اللاعبين إلى الـ waiting
-        await returnPlayersToWaiting(guild, match);
-
-        // قفل وحذف الغرفة المؤقتة بعد 15 ثانية
-        setTimeout(async () => {
-            try {
-                await channel.delete('Match completed and closed.');
-            } catch (e) {}
-        }, 15000);
-    } else {
-        // إذا لم يكتمل كلاهما بعد: إرسال حالة التصويت الحالية وما هو متبقي لإعلام الجميع
-        const statusEmbed = new EmbedBuilder()
-            .setColor('#2f3136')
-            .setTitle('📊 حالة التصويت الحالية (Voting Status)')
-            .setDescription(
-                `🏆 **تصويت الفوز والـ MVP الفائز:** \`${winVotesCount}/${reqWin}\` أصوات ${isWinComplete ? '✅ (مكتمل)' : '⏳ (متبقي أصوات)'}\n` +
-                `🎖️ **تصويت الـ MVP الخاسر (Top Killer):** \`${loserVotesCount}/${reqLoser}\` أصوات ${isLoserComplete ? '✅ (مكتمل)' : '⏳ (متبقي أصوات)'}\n\n` +
-                `🔒 **تنبيه:** لن يتم إنهاء المباراة وإغلاق الروم وحفظ النقاط إلا بعد اكتمال تصويت الفائز وتصويت الخاسر بالكامل!`
-            )
-            .setFooter({ text: `Apostado Voting Verification • Mode: ${match.mode}` })
-            .setTimestamp();
-
-        await channel.send({ embeds: [statusEmbed] });
-    }
+    return new StringSelectMenuBuilder()
+        .setCustomId(`vote_loser_mvp_select_${match.id}`)
+        .setPlaceholder('CHOSE THE MVP')
+        .addOptions(opts);
 }
 
 // معالجة الانضمام للفرق
@@ -2219,35 +2271,30 @@ async function startMatch(guild, match) {
 
         let matchChannel;
         try {
-            matchChannel = await guild.channels.create({
-                name: `match-${match.id}`,
-                type: ChannelType.GuildText,
-                parent: playChannel.parentId || undefined,
-                permissionOverwrites: permissionOverwrites,
-                reason: `Match text room for Free Fire Match ${match.id}`
+            matchChannel = await playChannel.threads.create({
+                name: `Match ${match.id}`,
+                autoArchiveDuration: 60,
+                type: ChannelType.PrivateThread, // Fil privé
+                invitable: false,
+                reason: `Private thread for Free Fire Match ${match.id}`
             });
-        } catch (chanErr) {
-            console.error('Failed to create match text channel, creating thread as fallback:', chanErr);
-            try {
-                matchChannel = await playChannel.threads.create({
-                    name: `Match ${match.id}`,
-                    autoArchiveDuration: 60,
-                    type: ChannelType.PrivateThread,
-                    reason: `Private thread for Free Fire Match ${match.id}`
-                });
-            } catch (threadErr) {
-                matchChannel = await playChannel.threads.create({
-                    name: `Match ${match.id}`,
-                    autoArchiveDuration: 60,
-                    reason: `Thread for Free Fire Match ${match.id}`
-                });
-            }
-            for (const uid of allParticipants) {
-                await matchChannel.members.add(uid).catch(() => {});
-            }
+        } catch (threadErr) {
+            console.error('Failed to create private thread, creating public thread fallback:', threadErr);
+            matchChannel = await playChannel.threads.create({
+                name: `Match ${match.id}`,
+                autoArchiveDuration: 60,
+                reason: `Thread for Free Fire Match ${match.id}`
+            });
         }
 
+        // إضافة جميع اللاعبين في الفريقين (Team 1 & Team 2) داخل الـ Fil Privé
+        for (const uid of allParticipants) {
+            await matchChannel.members.add(uid).catch(e => console.error(`Error adding ${uid} to match thread:`, e));
+        }
+
+        match.matchChannelId = matchChannel.id;
         match.threadId = matchChannel.id;
+        saveMatchToDb(match);
 
         // تحديث رسالة Match Ready بالرابط المباشر للروم
         const readyUpdatedEmbed = new EmbedBuilder()
@@ -2300,12 +2347,6 @@ async function startMatch(guild, match) {
                     emoji: '👾'
                 },
                 {
-                    label: 'MVP Losers',
-                    description: 'Vote for the best player from losing team',
-                    value: 'mvp_losers',
-                    emoji: '🔴'
-                },
-                {
                     label: 'Call Staff',
                     description: 'Request staff assistance',
                     value: 'call_staff',
@@ -2319,9 +2360,21 @@ async function startMatch(guild, match) {
                 },
                 {
                     label: 'Staff Cancel Match',
-                    description: 'Staff only - cancel match immediately',
+                    description: 'Staff only — cancel match immediately',
                     value: 'staff_cancel',
                     emoji: '🛑'
+                },
+                {
+                    label: 'Report Bug',
+                    description: 'Report a bug with risk and details',
+                    value: 'report_bug',
+                    emoji: '🚨'
+                },
+                {
+                    label: 'Cancel Match',
+                    description: 'Any player can start — confirm on the cancel panel',
+                    value: 'cancel_match_request',
+                    emoji: '✖'
                 }
             ]);
 
