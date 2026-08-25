@@ -212,6 +212,85 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: rulesText }).catch(() => { });
         }
 
+        // --- إضافة أمر give role ---
+        if (commandName === 'giverole') {
+            if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                return interaction.reply({ content: '❌ ليس لديك صلاحية لإدارة الرتب يا أسطى!', ephemeral: true });
+            }
+
+            const targetMember = interaction.options.getMember('member');
+            const targetRole = interaction.options.getRole('role');
+
+            if (!targetMember) {
+                return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو في السيرفر!', ephemeral: true });
+            }
+
+            // التحقق من صلاحيات البوت مقارنة بالرتبة المراد إعطاؤها
+            if (interaction.guild.members.me.roles.highest.position <= targetRole.position) {
+                return interaction.reply({ content: '❌ رتبة البوت أدنى أو مساوية لهذه الرتبة، لا يمكنني إعطاؤها!', ephemeral: true });
+            }
+
+            try {
+                await targetMember.roles.add(targetRole);
+
+                const embed = new EmbedBuilder()
+                    .setColor(0x00ff00)
+                    .setTitle('⚡ ROLE ASSIGNED SUCCESSFULLY ⚡')
+                    .setDescription(`تم إعطاء الرتبة بنجاح وعليها ختم الجودة يا أسطى!`)
+                    .addFields(
+                        { name: '👤 Target Member', value: `${targetMember} (\`${targetMember.user.tag}\`)`, inline: false },
+                        { name: '🛡️ Granted Role', value: `${targetRole}`, inline: true },
+                        { name: '👑 Managed By', value: `${interaction.user}`, inline: true }
+                    )
+                    .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
+                    .setTimestamp();
+
+                await interaction.reply({ embeds: [embed] });
+            } catch (error) {
+                console.error(error);
+                await interaction.reply({ content: '❌ حدث خطأ أثناء محاولة إعطاء الرتبة (تأكد من صلاحيات البوت).', ephemeral: true });
+            }
+        }
+
+        // --- إضافة أمر remove role ---
+        if (commandName === 'removerole') {
+            if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                return interaction.reply({ content: '❌ ليس لديك صلاحية لإدارة الرتب يا أسطى!', ephemeral: true });
+            }
+
+            const targetMember = interaction.options.getMember('member');
+            const targetRole = interaction.options.getRole('role');
+
+            if (!targetMember) {
+                return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو في السيرفر!', ephemeral: true });
+            }
+
+            if (interaction.guild.members.me.roles.highest.position <= targetRole.position) {
+                return interaction.reply({ content: '❌ رتبة البوت أدنى أو مساوية لهذه الرتبة، لا يمكنني سحبها!', ephemeral: true });
+            }
+
+            try {
+                await targetMember.roles.remove(targetRole);
+
+                const embed = new EmbedBuilder()
+                    .setColor(0xff0000)
+                    .setTitle('⚠️ ROLE REMOVED SUCCESSFULLY ⚠️')
+                    .setDescription(`تم سحب الرتبة بنجاح يا أسطى!`)
+                    .addFields(
+                        { name: '👤 Target Member', value: `${targetMember} (\`${targetMember.user.tag}\`)`, inline: false },
+                        { name: '🛡️ Removed Role', value: `${targetRole}`, inline: true },
+                        { name: '👑 Managed By', value: `${interaction.user}`, inline: true }
+                    )
+                    .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
+                    .setTimestamp();
+
+                await interaction.reply({ embeds: [embed] });
+            } catch (error) {
+                console.error(error);
+                await interaction.reply({ content: '❌ حدث خطأ أثناء محاولة سحب الرتبة (تأكد من صلاحيات البوت).', ephemeral: true });
+            }
+        }
+
         if (commandName === 'ticket') {
             if (!interaction.member.permissions.has('Administrator')) {
                 return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -233,7 +312,6 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
         }
 
-        // أمر لوحة الفحص V2
         if (commandName === 'checker') {
             if (!interaction.member.permissions.has('Administrator')) {
                 return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -265,7 +343,6 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: `✅ تم إرسال لوحة الفحص V2 بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
         }
 
-        // أمر إشعار البث المباشر الجديد
         if (commandName === 'live') {
             if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
                 return interaction.reply({ content: '❌ هذا الأمر مخصص للإدارة فقط يا أسطى!', ephemeral: true });
@@ -466,7 +543,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.update({ content: `✅ تم اختيار اللاعب بنجاح. اختر المنصة الآن واضغط Send Check.` }).catch(() => { });
     }
 
-    else if (interaction.isStringSelectMenu() && interaction.customId === 'select_suspect_platform') {
+    else if (interaction.isStringSelectMenu() && interaction.customId === 'select_susProperty_platform' || interaction.customId === 'select_suspect_platform') {
         let session = activeCheckSessions.get(interaction.user.id) || { suspectId: null, platform: null };
         session.platform = interaction.values[0];
         activeCheckSessions.set(interaction.user.id, session);
