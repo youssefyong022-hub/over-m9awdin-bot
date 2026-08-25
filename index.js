@@ -84,6 +84,14 @@ db.serialize(() => {
         data TEXT
     )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS blacklist (
+        userId TEXT,
+        guildId TEXT,
+        expiresAt INTEGER,
+        reason TEXT,
+        PRIMARY KEY (userId, guildId)
+    )`);
+
     const requiredColumns = [
         { name: 'points', type: 'INTEGER DEFAULT 1000' },
         { name: 'wins', type: 'INTEGER DEFAULT 0' },
@@ -99,6 +107,60 @@ db.serialize(() => {
         });
     });
 });
+
+// دوال البلاك ليست (Blacklist Database Functions)
+function setUserBlacklist(userId, guildId, durationMinutes, reason = 'مخالفة القوانين') {
+    return new Promise((resolve) => {
+        const expiresAt = Date.now() + durationMinutes * 60 * 1000;
+        db.run(`INSERT OR REPLACE INTO blacklist (userId, guildId, expiresAt, reason) VALUES (?, ?, ?, ?)`, [userId, guildId, expiresAt, reason], () => resolve());
+    });
+}
+
+function removeUserBlacklist(userId, guildId) {
+    return new Promise((resolve) => {
+        db.run(`DELETE FROM blacklist WHERE userId = ? AND guildId = ?`, [userId, guildId], () => resolve());
+    });
+}
+
+function isUserBlacklisted(userId, guildId) {
+    return new Promise((resolve) => {
+        db.get(`SELECT * FROM blacklist WHERE userId = ? AND guildId = ?`, [userId, guildId], (err, row) => {
+            if (err || !row) return resolve({ blacklisted: false });
+            if (Date.now() >= row.expiresAt) {
+                db.run(`DELETE FROM blacklist WHERE userId = ? AND guildId = ?`, [userId, guildId]);
+                return resolve({ blacklisted: false });
+            }
+            const remainingMs = row.expiresAt - Date.now();
+            resolve({ blacklisted: true, remainingMs, reason: row.reason || 'مخالفة القوانين' });
+        });
+    });
+}
+
+function getBlacklistedUsers(guildId) {
+    return new Promise((resolve) => {
+        db.all(`SELECT * FROM blacklist WHERE guildId = ?`, [guildId], (err, rows) => {
+            if (err || !rows) return resolve([]);
+            const now = Date.now();
+            const valid = [];
+            for (const r of rows) {
+                if (r.expiresAt > now) {
+                    valid.push({ ...r, remainingMs: r.expiresAt - now });
+                } else {
+                    db.run(`DELETE FROM blacklist WHERE userId = ? AND guildId = ?`, [r.userId, r.guildId]);
+                }
+            }
+            resolve(valid);
+        });
+    });
+}
+
+function formatRemainingTime(ms) {
+    const totalSec = Math.ceil(ms / 1000);
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    if (mins > 0) return `${mins} دقيقة و ${secs} ثانية`;
+    return `${secs} ثانية`;
+}
 
 // دوال حفظ واسترجاع المباريات في قاعدة البيانات (Match Persistence)
 function saveMatchToDb(match) {
@@ -345,7 +407,7 @@ const activeCheckSessions = new Map();
 const voiceJoinTimes = new Map();
 let checkStats = { pending: 1, cheaters: 7, clean: 5 };
 
-client.on('voiceStateUpdate', (oldState, newState) => {
+client.on('voiceStateUpdate', async (oldState, newState) => {
     const userId = newState.id || oldState.id;
     const guildId = newState.guild.id || oldState.guild.id;
     const key = `${userId}_${guildId}`;
@@ -358,6 +420,32 @@ client.on('voiceStateUpdate', (oldState, newState) => {
             const durationSec = Math.floor((Date.now() - joinTime) / 1000);
             voiceJoinTimes.delete(key);
             db.run(`UPDATE users SET voiceTime = voiceTime + ? WHERE userId = ? AND guildId = ?`, [durationSec, userId, guildId]);
+        }
+    }
+
+    // فحص خروج اللاعب من الروم الصوتي أثناء المباراة (Voice Leave Auto-Blacklist - 15 دقيقة)
+    if (oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
+        for (const match of activeMatches.values()) {
+            if (match.guildId === guildId && match.state === 'IN_PROGRESS' && !match.votingCompleted) {
+                const isT1 = match.team1.includes(userId);
+                const isT2 = match.team2.includes(userId);
+                if (isT1 || isT2) {
+                    const matchVoiceId = isT1 ? match.team1VoiceId : match.team2VoiceId;
+                    if (oldState.channelId === matchVoiceId && newState.channelId !== matchVoiceId) {
+                        await setUserBlacklist(userId, guildId, 15, 'الخروج من الروم الصوتي أثناء المباراة');
+                        const matchChannel = (newState.guild || oldState.guild).channels.cache.get(match.matchChannelId || match.threadId);
+                        if (matchChannel) {
+                            const blEmbed = new EmbedBuilder()
+                                .setColor('#ff0033')
+                                .setTitle('🚨 عقوبة تلقائية: Blacklist (15 دقيقة)')
+                                .setDescription(`⚠️ **اللاعب <@${userId}> خرج من الروم الصوتي أثناء المباراة!**\nتم إدراجه تلقائياً في قائمة الحظر من اللعب (**Blacklist**) لمدة **15 دقيقة**.\n⛔ لن يتمكن من إنشاء أو الانضمام لأي مباراة حتى انتهاء العقوبة.`)
+                                .setFooter({ text: 'Apostado Anti-Dodge & Fair Play System' })
+                                .setTimestamp();
+                            matchChannel.send({ embeds: [blEmbed] }).catch(() => {});
+                        }
+                    }
+                }
+            }
         }
     }
 });
@@ -418,6 +506,26 @@ client.once('clientReady', async () => {
                 option.setName('title')
                     .setDescription('عنوان البث (اختياري)')
                     .setRequired(false)
+            ),
+        new SlashCommandBuilder()
+            .setName('blacklist')
+            .setDescription('إدارة قائمة الحظر المؤقت (Blacklist)')
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+            .addSubcommand(sub =>
+                sub.setName('add')
+                    .setDescription('إضافة لاعب إلى قائمة الحظر')
+                    .addUserOption(opt => opt.setName('user').setDescription('اللاعب المراد حظره').setRequired(true))
+                    .addIntegerOption(opt => opt.setName('minutes').setDescription('مدة الحظر بالدقائق (مثال: 15)').setRequired(true))
+                    .addStringOption(opt => opt.setName('reason').setDescription('سبب الحظر').setRequired(false))
+            )
+            .addSubcommand(sub =>
+                sub.setName('remove')
+                    .setDescription('إزالة لاعب من قائمة الحظر')
+                    .addUserOption(opt => opt.setName('user').setDescription('اللاعب المراد فك حظره').setRequired(true))
+            )
+            .addSubcommand(sub =>
+                sub.setName('list')
+                    .setDescription('عرض قائمة اللاعبين المحظورين حالياً والوقت المتبقي')
             )
     ].map(command => command.toJSON());
 
@@ -485,8 +593,89 @@ client.on('messageCreate', async message => {
         return;
     }
 
-    // أمر إنشاء المباريات !play
+    // أوامر البلاك ليست النصية للإدارة (!blacklist / !unblacklist / !bl)
+    if (content.toLowerCase().startsWith('!blacklist') || content.toLowerCase().startsWith('!bl ') || content.toLowerCase().startsWith('!unblacklist') || content.toLowerCase().startsWith('!unbl ')) {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            return message.reply('❌ هذا الأمر مخصص لطاقم الإدارة فقط!');
+        }
+
+        const parts = content.trim().split(/\s+/);
+        const cmd = parts[0].toLowerCase();
+
+        if (cmd === '!blacklist' || cmd === '!bl') {
+            if (parts[1]?.toLowerCase() === 'list') {
+                const list = await getBlacklistedUsers(guildId);
+                if (!list || list.length === 0) {
+                    return message.reply('ℹ️ **لا يوجد أي لاعبين في قائمة البلاك ليست حالياً.**');
+                }
+                const desc = list.map((item, idx) => {
+                    return `**#${idx + 1}** <@${item.userId}> (\`${item.userId}\`)\n⏳ **الوقت المتبقي:** \`${formatRemainingTime(item.remainingMs)}\`\n📝 **السبب:** \`${item.reason}\``;
+                }).join('\n\n');
+                const listEmbed = new EmbedBuilder()
+                    .setColor('#ff0033')
+                    .setTitle('📋 قائمة المحظورين حالياً (Blacklist)')
+                    .setDescription(desc)
+                    .setFooter({ text: `${message.guild.name} • Total: ${list.length}` })
+                    .setTimestamp();
+                return message.reply({ embeds: [listEmbed] });
+            }
+
+            const targetUser = message.mentions.users.first() || (parts[1] ? await client.users.fetch(parts[1]).catch(() => null) : null);
+            if (!targetUser) {
+                return message.reply('ℹ️ **الاستخدام:** `!blacklist @user [minutes] [reason]` أو `!blacklist list`');
+            }
+
+            const minutes = parseInt(parts[2]) || 15;
+            const reason = parts.slice(3).join(' ') || 'مخالفة القوانين';
+
+            await setUserBlacklist(targetUser.id, guildId, minutes, reason);
+
+            const blEmbed = new EmbedBuilder()
+                .setColor('#ff0033')
+                .setTitle('⛔ تم إضافة اللاعب إلى البلاك ليست (Blacklist)')
+                .setDescription(`👤 **اللاعب:** ${targetUser} (\`${targetUser.id}\`)\n⏰ **المدة:** \`${minutes}\` دقيقة\n📝 **السبب:** \`${reason}\`\n👑 **بواسطة:** ${message.author}`)
+                .setFooter({ text: `${message.guild.name} • Blacklist System` })
+                .setTimestamp();
+
+            return message.reply({ embeds: [blEmbed] });
+        }
+
+        if (cmd === '!unblacklist' || cmd === '!unbl') {
+            const targetUser = message.mentions.users.first() || (parts[1] ? await client.users.fetch(parts[1]).catch(() => null) : null);
+            if (!targetUser) {
+                return message.reply('ℹ️ **الاستخدام:** `!unblacklist @user`');
+            }
+
+            await removeUserBlacklist(targetUser.id, guildId);
+
+            const unblEmbed = new EmbedBuilder()
+                .setColor('#00ff88')
+                .setTitle('✅ تم فك حظر اللاعب من البلاك ليست')
+                .setDescription(`👤 **اللاعب:** ${targetUser} (\`${targetUser.id}\`)\n👑 **تم فك الحظر بواسطة:** ${message.author}`)
+                .setFooter({ text: `${message.guild.name} • Blacklist System` })
+                .setTimestamp();
+
+            return message.reply({ embeds: [unblEmbed] });
+        }
+    }
+
+    // أمر إنشاء المباريات !play (فقط 2v2, 3v3, 4v4)
     if (content.toLowerCase().startsWith('!play') || content.toLowerCase().startsWith('! play')) {
+        // التحقق من البلاك ليست
+        const bl = await isUserBlacklisted(userId, guildId);
+        if (bl.blacklisted) {
+            return message.reply(`⛔ **أنت في قائمة الحظر (Blacklist)!**\n⏳ **متبقي على فك الحظر:** \`${formatRemainingTime(bl.remainingMs)}\`\n📝 **السبب:** \`${bl.reason}\``);
+        }
+
+        // التحقق من التواجد في مباراة نشطة أخرى لم يكتمل تصويتها
+        const activeMatchForUser = Array.from(activeMatches.values()).find(m => 
+            m.guildId === guildId && (m.team1.includes(userId) || m.team2.includes(userId)) && !m.votingCompleted
+        );
+        if (activeMatchForUser) {
+            const chId = activeMatchForUser.matchChannelId || activeMatchForUser.threadId;
+            return message.reply(`❌ **لا يمكنك إنشاء مباراة جديدة!**\nأنت مشارك بالفعل في مباراة نشطة (<#${chId}>) حتى ينتهي التصويت بالكامل.`);
+        }
+
         const cleanContent = content.replace(/\s+/g, ' ').trim();
         const parts = cleanContent.split(' ');
         
@@ -496,7 +685,6 @@ client.on('messageCreate', async message => {
         }
 
         const validModes = {
-            '1v1': 1,
             '2v2': 2,
             '3v3': 3,
             '4v4': 4
@@ -506,7 +694,7 @@ client.on('messageCreate', async message => {
             const invalidEmbed = new EmbedBuilder()
                 .setColor('#2b2d31')
                 .setTitle('ℹ️ Invalid Mode')
-                .setDescription('Please specify a valid mode: `!play 1v1`, `!play 2v2`, `!play 3v3`, or `!play 4v4`')
+                .setDescription('Please specify a valid mode: `!play 2v2`, `!play 3v3`, or `!play 4v4`')
                 .setFooter({ text: new Date().toLocaleString() });
 
             return message.reply({ embeds: [invalidEmbed] });
@@ -796,6 +984,65 @@ client.on('interactionCreate', async interaction => {
                     .setTimestamp();
                 await interaction.reply({ content: '✅ جاري إرسال إشعار البث...', ephemeral: true });
                 await interaction.channel.send({ content: `🚀 **هجوم يا أبطال، البث فتح!**`, embeds: [liveEmbed] });
+            }
+
+            if (commandName === 'blacklist') {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+                    return interaction.reply({ content: '❌ هذا الأمر مخصص لطاقم الإدارة فقط!', ephemeral: true });
+                }
+                const sub = interaction.options.getSubcommand();
+                const guildId = interaction.guild.id;
+
+                if (sub === 'add') {
+                    const targetUser = interaction.options.getUser('user');
+                    const minutes = interaction.options.getInteger('minutes');
+                    const reason = interaction.options.getString('reason') || 'مخالفة القوانين';
+
+                    await setUserBlacklist(targetUser.id, guildId, minutes, reason);
+
+                    const blEmbed = new EmbedBuilder()
+                        .setColor('#ff0033')
+                        .setTitle('⛔ تم إضافة اللاعب إلى البلاك ليست (Blacklist)')
+                        .setDescription(`👤 **اللاعب:** ${targetUser} (\`${targetUser.id}\`)\n⏰ **المدة:** \`${minutes}\` دقيقة\n📝 **السبب:** \`${reason}\`\n👑 **بواسطة:** ${interaction.user}`)
+                        .setFooter({ text: `${interaction.guild.name} • Blacklist System` })
+                        .setTimestamp();
+
+                    return interaction.reply({ embeds: [blEmbed] });
+                }
+
+                if (sub === 'remove') {
+                    const targetUser = interaction.options.getUser('user');
+                    await removeUserBlacklist(targetUser.id, guildId);
+
+                    const unblEmbed = new EmbedBuilder()
+                        .setColor('#00ff88')
+                        .setTitle('✅ تم فك حظر اللاعب من البلاك ليست')
+                        .setDescription(`👤 **اللاعب:** ${targetUser} (\`${targetUser.id}\`)\n👑 **تم فك الحظر بواسطة:** ${interaction.user}`)
+                        .setFooter({ text: `${interaction.guild.name} • Blacklist System` })
+                        .setTimestamp();
+
+                    return interaction.reply({ embeds: [unblEmbed] });
+                }
+
+                if (sub === 'list') {
+                    const list = await getBlacklistedUsers(guildId);
+                    if (!list || list.length === 0) {
+                        return interaction.reply({ content: 'ℹ️ **لا يوجد أي لاعبين في قائمة البلاك ليست حالياً.**', ephemeral: true });
+                    }
+
+                    const desc = list.map((item, idx) => {
+                        return `**#${idx + 1}** <@${item.userId}> (\`${item.userId}\`)\n⏳ **الوقت المتبقي:** \`${formatRemainingTime(item.remainingMs)}\`\n📝 **السبب:** \`${item.reason}\``;
+                    }).join('\n\n');
+
+                    const listEmbed = new EmbedBuilder()
+                        .setColor('#ff0033')
+                        .setTitle('📋 قائمة المحظورين حالياً (Blacklist)')
+                        .setDescription(desc)
+                        .setFooter({ text: `${interaction.guild.name} • Total Blacklisted: ${list.length}` })
+                        .setTimestamp();
+
+                    return interaction.reply({ embeds: [listEmbed] });
+                }
             }
         }
 
@@ -1506,6 +1753,29 @@ client.on('interactionCreate', async interaction => {
 // معالجة الانضمام للفرق
 async function handleTeamJoin(interaction, match, teamNum) {
     const uid = interaction.user.id;
+    const guildId = interaction.guild.id;
+
+    // 1. التحقق من البلاك ليست
+    const bl = await isUserBlacklisted(uid, guildId);
+    if (bl.blacklisted) {
+        return interaction.reply({ 
+            content: `⛔ **أنت في قائمة الحظر (Blacklist)!**\n⏳ **متبقي على فك الحظر:** \`${formatRemainingTime(bl.remainingMs)}\`\n📝 **السبب:** \`${bl.reason}\``, 
+            ephemeral: true 
+        });
+    }
+
+    // 2. التحقق من التواجد في مباراة أخرى نشطة لم يكتمل تصويتها بعد
+    const activeMatchForUser = Array.from(activeMatches.values()).find(m => 
+        m.guildId === guildId && m.id !== match.id && (m.team1.includes(uid) || m.team2.includes(uid)) && !m.votingCompleted
+    );
+    if (activeMatchForUser) {
+        const chId = activeMatchForUser.matchChannelId || activeMatchForUser.threadId;
+        return interaction.reply({ 
+            content: `❌ **لا يمكنك الانضمام لمباراة أخرى!**\nأنت متواجد بالفعل في مباراة نشطة (<#${chId}>) حتى ينتهي التصويت بالكامل.`, 
+            ephemeral: true 
+        });
+    }
+
     const team = teamNum === 1 ? match.team1 : match.team2;
     const otherTeam = teamNum === 1 ? match.team2 : match.team1;
 
@@ -1523,6 +1793,7 @@ async function handleTeamJoin(interaction, match, teamNum) {
     }
 
     team.push(uid);
+    saveMatchToDb(match);
 
     await interaction.reply({ content: `✅ تم انضمامك إلى **Team ${teamNum}** بنجاح!`, ephemeral: true });
     await updateLobbyMessage(interaction.guild, match);
@@ -1531,6 +1802,7 @@ async function handleTeamJoin(interaction, match, teamNum) {
     if (match.team1.length === match.teamSize && match.team2.length === match.teamSize) {
         if (match.lobbyTimeout) clearTimeout(match.lobbyTimeout);
         match.state = 'IN_PROGRESS';
+        saveMatchToDb(match);
         await startMatch(interaction.guild, match);
     }
 }
