@@ -10,7 +10,7 @@ app.listen(port, () => {
     console.log(`Web server is listening on port ${port}`);
 });
 
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, UserSelectMenuBuilder, StringSelectMenuBuilder } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
 
@@ -41,7 +41,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
 )`);
 
 client.once('clientReady', async () => {
-    console.log(`Logged in as ${client.user.tag} (Full Production Mode)`);
+    console.log(`Logged in as ${client.user.tag} (Advanced Interactive Mode)`);
 
     const commands = [
         new SlashCommandBuilder()
@@ -113,283 +113,314 @@ client.on('messageCreate', async message => {
     });
 });
 
+// تخزين مؤقت للاختيارات الخاصة بكل مستخدم أثناء عملية الفحص
+const activeCheckSessions = new Map();
+
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isChatInputCommand()) return;
+    if (interaction.isChatInputCommand()) {
+        const { commandName } = interaction;
 
-    const { commandName } = interaction;
+        if (commandName === 'profile') {
+            const targetUser = interaction.options.getUser('user') || interaction.user;
+            const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
 
-    if (commandName === 'profile') {
-        const targetUser = interaction.options.getUser('user') || interaction.user;
-        const member = await interaction.guild.members.fetch(targetUser.id).catch(() => null);
+            db.get(`SELECT * FROM users WHERE userId = ? AND guildId = ?`, [targetUser.id, interaction.guild.id], async (err, row) => {
+                const level = row ? row.level : 1;
+                const xp = row ? row.xp : 0;
+                const messages = row ? row.messages : 0;
+                const voiceTime = row ? row.voiceTime || 0 : 0;
 
-        db.get(`SELECT * FROM users WHERE userId = ? AND guildId = ?`, [targetUser.id, interaction.guild.id], async (err, row) => {
-            const level = row ? row.level : 1;
-            const xp = row ? row.xp : 0;
-            const messages = row ? row.messages : 0;
-            const voiceTime = row ? row.voiceTime || 0 : 0;
+                const minutes = Math.floor(voiceTime / 60);
+                const seconds = voiceTime % 60;
+                const voiceFormatted = `${minutes}m ${seconds}s`;
 
-            const minutes = Math.floor(voiceTime / 60);
-            const seconds = voiceTime % 60;
-            const voiceFormatted = `${minutes}m ${seconds}s`;
+                const joinedDate = member && member.joinedAt ? member.joinedAt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : 'غير معروف';
 
-            const joinedDate = member && member.joinedAt ? member.joinedAt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' }) : 'غير معروف';
+                const roles = member ? member.roles.cache
+                    .filter(r => r.id !== interaction.guild.id)
+                    .map(r => `<@&${r.id}>`)
+                    .join(' , ') || 'لا توجد رتب' : 'لا توجد رتب';
 
-            const roles = member ? member.roles.cache
-                .filter(r => r.id !== interaction.guild.id)
-                .map(r => `<@&${r.id}>`)
-                .join(' , ') || 'لا توجد رتب' : 'لا توجد رتب';
+                const embed = new EmbedBuilder()
+                    .setColor(0x2f3136)
+                    .setTitle(`📊 Profile — ${targetUser.username}`)
+                    .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 512 }))
+                    .addFields(
+                        { name: '⭐ Level', value: `${level}`, inline: true },
+                        { name: '✨ XP', value: `${xp}`, inline: true },
+                        { name: '🏆 Rank', value: `#1`, inline: true },
+                        { name: '💬 Messages', value: `${messages}`, inline: true },
+                        { name: '🎙️ Voice Time', value: `${voiceFormatted}`, inline: true },
+                        { name: '📅 Joined Server', value: `${joinedDate}`, inline: false },
+                        { name: '🎭 Roles', value: roles, inline: false }
+                    )
+                    .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
+                    .setTimestamp();
 
-            const embed = new EmbedBuilder()
-                .setColor(0x2f3136)
-                .setTitle(`📊 Profile — ${targetUser.username}`)
-                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 512 }))
-                .addFields(
-                    { name: '⭐ Level', value: `${level}`, inline: true },
-                    { name: '✨ XP', value: `${xp}`, inline: true },
-                    { name: '🏆 Rank', value: `#1`, inline: true },
-                    { name: '💬 Messages', value: `${messages}`, inline: true },
-                    { name: '🎙️ Voice Time', value: `${voiceFormatted}`, inline: true },
-                    { name: '📅 Joined Server', value: `${joinedDate}`, inline: false },
-                    { name: '🎭 Roles', value: roles, inline: false }
-                )
-                .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
-                .setTimestamp();
+                await interaction.reply({ embeds: [embed] }).catch(() => { });
+            });
+        }
 
-            await interaction.reply({ embeds: [embed] }).catch(() => { });
-        });
-    }
+        if (commandName === 'rank') {
+            const targetUser = interaction.options.getUser('user') || interaction.user;
 
-    if (commandName === 'rank') {
-        const targetUser = interaction.options.getUser('user') || interaction.user;
+            db.get(`SELECT * FROM users WHERE userId = ? AND guildId = ?`, [targetUser.id, interaction.guild.id], async (err, row) => {
+                const level = row ? row.level : 1;
+                const xp = row ? row.xp : 0;
+                const requiredXp = level * 100;
 
-        db.get(`SELECT * FROM users WHERE userId = ? AND guildId = ?`, [targetUser.id, interaction.guild.id], async (err, row) => {
-            const level = row ? row.level : 1;
-            const xp = row ? row.xp : 0;
-            const requiredXp = level * 100;
+                const embed = new EmbedBuilder()
+                    .setColor(0x2f3136)
+                    .setTitle(`🏆 Rank Stats — ${targetUser.username}`)
+                    .setDescription(`إليك إحصائيات المستوى والـ XP يا أسطى!`)
+                    .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 512 }))
+                    .addFields(
+                        { name: '⭐ Level', value: `${level}`, inline: true },
+                        { name: '✨ XP', value: `${xp}`, inline: true },
+                        { name: '📊 Server Rank', value: `#1`, inline: true },
+                        { name: '📈 Next Level', value: `${xp} / ${requiredXp} XP`, inline: false }
+                    )
+                    .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
+                    .setTimestamp();
 
-            const embed = new EmbedBuilder()
-                .setColor(0x2f3136)
-                .setTitle(`🏆 Rank Stats — ${targetUser.username}`)
-                .setDescription(`إليك إحصائيات المستوى والـ XP يا أسطى!`)
-                .setThumbnail(targetUser.displayAvatarURL({ dynamic: true, size: 512 }))
-                .addFields(
-                    { name: '⭐ Level', value: `${level}`, inline: true },
-                    { name: '✨ XP', value: `${xp}`, inline: true },
-                    { name: '📊 Server Rank', value: `#1`, inline: true },
-                    { name: '📈 Next Level', value: `${xp} / ${requiredXp} XP`, inline: false }
-                )
-                .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
-                .setTimestamp();
+                await interaction.reply({ embeds: [embed] }).catch(() => { });
+            });
+        }
 
-            await interaction.reply({ embeds: [embed] }).catch(() => { });
-        });
-    }
-
-    if (commandName === 'rules') {
-        const rulesText = `
+        if (commandName === 'rules') {
+            const rulesText = `
 ╭━━━ 🛡️ **[ DEBBABI CHEAT - SERVER RULES ]** 🛡️ ━━━╮
 ✨ **أهلاً بك يا بطل في مجتمعنا الرسمي!** لضمان بيئة آمنة ومنظمة للجميع.
 > 🔹 **الاحترام المتبادل:** يمنع الشتم والسب منعاً باتاً.
 > 🔹 **الإعلانات والسبام:** يمنع نشر الروابط أو السبام نهائياً.
 📌 **DEBBABI CHEAT • Management System**
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-        `;
-        await interaction.reply({ content: rulesText }).catch(() => { });
-    }
-
-    if (commandName === 'ticket') {
-        if (!interaction.member.permissions.has('Administrator')) {
-            return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
+            `;
+            await interaction.reply({ content: rulesText }).catch(() => { });
         }
 
-        const targetChannel = interaction.options.getChannel('channel');
+        if (commandName === 'ticket') {
+            if (!interaction.member.permissions.has('Administrator')) {
+                return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
+            }
 
-        const ticketEmbed = new EmbedBuilder()
-            .setColor('#2b2d31')
-            .setTitle('📁 Tickets')
-            .setDescription('Select a category to open a ticket.');
+            const targetChannel = interaction.options.getChannel('channel');
 
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('create_ticket_help').setLabel('Help').setStyle(ButtonStyle.Secondary).setEmoji('🛡️'),
-            new ButtonBuilder().setCustomId('create_ticket_abuse').setLabel('Server Abuse').setStyle(ButtonStyle.Danger).setEmoji('⚔️')
-        );
+            const ticketEmbed = new EmbedBuilder()
+                .setColor('#2b2d31')
+                .setTitle('📁 Tickets')
+                .setDescription('Select a category to open a ticket.');
 
-        await targetChannel.send({ embeds: [ticketEmbed], components: [row] });
-        await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
-    }
-
-    // أمر لوحة الفحص بالتصميم الاحترافي المطلوب
-    if (commandName === 'checker') {
-        if (!interaction.member.permissions.has('Administrator')) {
-            return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
-        }
-
-        const targetChannel = interaction.options.getChannel('channel');
-
-        const checkerEmbed = new EmbedBuilder()
-            .setColor('#2f3136')
-            .setTitle('🔍 User Check System')
-            .setDescription('Report suspicious players for staff verification.\n\n🚨 **How it works**\n• Press **Check a user** → open report form.\n• Enter player name/ID, platform, and reason.\n• The request is sent securely to the check-room for staff review.\n\n⚠️ **Important**\nOnly report with a valid reason. Abuse may result in a penalty.')
-            .setFooter({ text: 'DEBBABI CHEAT • Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
-            .setTimestamp();
-
-        const checkerRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('open_checker_modal')
-                .setLabel('Check a user')
-                .setStyle(ButtonStyle.Secondary)
-                .setEmoji('🔍')
-        );
-
-        await targetChannel.send({ embeds: [checkerEmbed], components: [checkerRow] });
-        await interaction.reply({ content: `✅ تم إرسال لوحة الفحص الاحترافية بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
-    }
-});
-
-client.on('interactionCreate', async interaction => {
-    if (interaction.isButton() && (interaction.customId === 'create_ticket_help' || interaction.customId === 'create_ticket_abuse')) {
-        await interaction.deferReply({ ephemeral: true });
-
-        const ticketType = interaction.customId === 'create_ticket_help' ? 'Help' : 'Server Abuse';
-        const channelName = `ticket-${interaction.user.username.toLowerCase()}`;
-
-        const existingChannel = interaction.guild.channels.cache.find(c => c.name === channelName);
-        if (existingChannel) {
-            return interaction.editReply({ content: `❌ لديك تذكرة مفتوحة بالفعل هنا: ${existingChannel}` });
-        }
-
-        try {
-            const ticketChannel = await interaction.guild.channels.create({
-                name: channelName,
-                type: 0,
-                permissionOverwrites: [
-                    { id: interaction.guild.id, deny: ['ViewChannel'] },
-                    { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
-                    { id: client.user.id, allow: ['ViewChannel', 'SendMessages', 'ManageChannels', 'ReadMessageHistory'] }
-                ],
-            });
-
-            const welcomeEmbed = new EmbedBuilder()
-                .setColor(ticketType === 'Help' ? '#0099ff' : '#ff0000')
-                .setTitle(`📁 ${ticketType} Ticket`)
-                .setDescription(`مرحباً بك ${interaction.user}، سيقوم أحد أعضاء فريق الإدارة بمساعدتك قريباً.`);
-
-            const ticketControlRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('close_ticket').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('create_ticket_help').setLabel('Help').setStyle(ButtonStyle.Secondary).setEmoji('🛡️'),
+                new ButtonBuilder().setCustomId('create_ticket_abuse').setLabel('Server Abuse').setStyle(ButtonStyle.Danger).setEmoji('⚔️')
             );
 
-            await ticketChannel.send({ content: `${interaction.user} أهلاً بك!`, embeds: [welcomeEmbed], components: [ticketControlRow] });
-            await interaction.editReply({ content: `✅ تم إنشاء تذكرتك بنجاح في القناة: ${ticketChannel}` });
+            await targetChannel.send({ embeds: [ticketEmbed], components: [row] });
+            await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
+        }
 
-        } catch (error) {
-            console.error(error);
-            await interaction.editReply({ content: '❌ حدث خطأ أثناء إنشاء التذكرة.' });
+        // أمر لوحة الفحص الرئيسية
+        if (commandName === 'checker') {
+            if (!interaction.member.permissions.has('Administrator')) {
+                return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
+            }
+
+            const targetChannel = interaction.options.getChannel('channel');
+
+            const checkerEmbed = new EmbedBuilder()
+                .setColor('#2f3136')
+                .setTitle('🔍 User Check System')
+                .setDescription('Report suspicious players for staff verification.\n\n🚨 **How it works**\n• Press **Check a user** to open the interactive member picker.\n• Search by name, pick the player, then choose their device (**PC** or **Phone**).\n• Send the request directly to the check-room for staff review.')
+                .setFooter({ text: 'DEBBABI CHEAT • Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            const checkerRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_checker_interactive')
+                    .setLabel('Check a user')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setEmoji('🔍')
+            );
+
+            await targetChannel.send({ embeds: [checkerEmbed], components: [checkerRow] });
+            await interaction.reply({ content: `✅ تم إرسال لوحة الفحص العصرية بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
         }
     }
 
-    else if (interaction.isButton() && interaction.customId === 'close_ticket') {
-        if (!interaction.member.permissions.has('ManageChannels')) {
-            return interaction.reply({ content: '❌ فقط الإدارة يمكنها إغلاق التذكرة!', ephemeral: true });
+    else if (interaction.isButton()) {
+        if (interaction.customId === 'create_ticket_help' || interaction.customId === 'create_ticket_abuse') {
+            await interaction.deferReply({ ephemeral: true });
+
+            const ticketType = interaction.customId === 'create_ticket_help' ? 'Help' : 'Server Abuse';
+            const channelName = `ticket-${interaction.user.username.toLowerCase()}`;
+
+            const existingChannel = interaction.guild.channels.cache.find(c => c.name === channelName);
+            if (existingChannel) {
+                return interaction.editReply({ content: `❌ لديك تذكرة مفتوحة بالفعل هنا: ${existingChannel}` });
+            }
+
+            try {
+                const ticketChannel = await interaction.guild.channels.create({
+                    name: channelName,
+                    type: 0,
+                    permissionOverwrites: [
+                        { id: interaction.guild.id, deny: ['ViewChannel'] },
+                        { id: interaction.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory'] },
+                        { id: client.user.id, allow: ['ViewChannel', 'SendMessages', 'ManageChannels', 'ReadMessageHistory'] }
+                    ],
+                });
+
+                const welcomeEmbed = new EmbedBuilder()
+                    .setColor(ticketType === 'Help' ? '#0099ff' : '#ff0000')
+                    .setTitle(`📁 ${ticketType} Ticket`)
+                    .setDescription(`مرحباً بك ${interaction.user}، سيقوم أحد أعضاء فريق الإدارة بمساعدتك قريباً.`);
+
+                const ticketControlRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('close_ticket').setLabel('Close Ticket').setStyle(ButtonStyle.Danger).setEmoji('🔒')
+                );
+
+                await ticketChannel.send({ content: `${interaction.user} أهلاً بك!`, embeds: [welcomeEmbed], components: [ticketControlRow] });
+                await interaction.editReply({ content: `✅ تم إنشاء تذكرتك بنجاح في القناة: ${ticketChannel}` });
+
+            } catch (error) {
+                console.error(error);
+                await interaction.editReply({ content: '❌ حدث خطأ أثناء إنشاء التذكرة.' });
+            }
         }
 
-        await interaction.reply({ content: '🔒 جاري إغلاق وحذف هذه التذكرة خلال 5 ثوانٍ...' });
-        setTimeout(async () => {
-            try { await interaction.channel.delete(); } catch (err) { }
-        }, 5000);
-    }
+        else if (interaction.customId === 'close_ticket') {
+            if (!interaction.member.permissions.has('ManageChannels')) {
+                return interaction.reply({ content: '❌ فقط الإدارة يمكنها إغلاق التذكرة!', ephemeral: true });
+            }
 
-    // زر فتح نافذة الشكوى الاحترافية
-    else if (interaction.isButton() && interaction.customId === 'open_checker_modal') {
-        const modal = new ModalBuilder()
-            .setCustomId('checker_submission_modal')
-            .setTitle('New Player Check');
-
-        const userInput = new TextInputBuilder()
-            .setCustomId('suspect_user_name')
-            .setLabel('Player Name or ID')
-            .setPlaceholder('اكتب اسم أو آيدي اللاعب المشتبه به...')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true);
-
-        const platformInput = new TextInputBuilder()
-            .setCustomId('suspect_platform')
-            .setLabel('Platform (PC or Phone)')
-            .setPlaceholder('اكتب PC أو Phone...')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true);
-
-        const reasonInput = new TextInputBuilder()
-            .setCustomId('suspect_reason')
-            .setLabel('Reason / Notes')
-            .setPlaceholder('اكتب سبب الاشتباه هنا...')
-            .setStyle(TextInputStyle.Paragraph)
-            .setRequired(false);
-
-        modal.addComponents(
-            new ActionRowBuilder().addComponents(userInput),
-            new ActionRowBuilder().addComponents(platformInput),
-            new ActionRowBuilder().addComponents(reasonInput)
-        );
-
-        await interaction.showModal(modal);
-    }
-
-    // إرسال البلاغ لغرفة الإدارة check-place-user مع الأزرار
-    else if (interaction.isModalSubmit() && interaction.customId === 'checker_submission_modal') {
-        const suspect = interaction.fields.getTextInputValue('suspect_user_name');
-        const platform = interaction.fields.getTextInputValue('suspect_platform');
-        const reason = interaction.fields.getTextInputValue('suspect_reason') || 'No reason provided';
-        const reporter = interaction.user;
-
-        await interaction.reply({
-            content: `🛡️ **تم تسجيل بلاغ الفحص بنجاح في النظام العسكري!**\n\n👤 **المشتبه به:** \`${suspect}\`\n💻 **المنصة:** \`${platform}\``,
-            ephemeral: true
-        });
-
-        const adminChannel = interaction.guild.channels.cache.find(c => c.name === 'check-place-user') || interaction.channel;
-
-        const reportEmbed = new EmbedBuilder()
-            .setColor('#ffaa00')
-            .setTitle('🚨 NEW PLAYER CHECK REPORT 🚨')
-            .addFields(
-                { name: '👤 المبلغ (Reporter)', value: `${reporter} (${reporter.username})`, inline: false },
-                { name: '🎯 المشتبه به (Suspect)', value: `\`${suspect}\``, inline: true },
-                { name: '💻 المنصة (Platform)', value: `\`${platform}\``, inline: true },
-                { name: '📝 الملاحظات', value: `\`${reason}\``, inline: false }
-            )
-            .setFooter({ text: 'DEBBABI CHEAT • Admin Control Panel', iconURL: client.user.displayAvatarURL() })
-            .setTimestamp();
-
-        const adminActionRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('check_clean').setLabel('Clean').setStyle(ButtonStyle.Success).setEmoji('🟢'),
-            new ButtonBuilder().setCustomId('check_cheater').setLabel('Cheater').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
-            new ButtonBuilder().setCustomId('check_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary).setEmoji('❌'),
-            new ButtonBuilder().setCustomId('check_kick').setLabel('Kick User').setStyle(ButtonStyle.Danger).setEmoji('👢')
-        );
-
-        await adminChannel.send({
-            content: `📢 **تنبيه إداري جديد:** ${reporter} قام بالإبلاغ عن لاعب!`,
-            embeds: [reportEmbed],
-            components: [adminActionRow]
-        });
-    }
-
-    else if (interaction.isButton() && ['check_clean', 'check_cheater', 'check_cancel', 'check_kick'].includes(interaction.customId)) {
-        if (!interaction.member.permissions.has('Administrator')) {
-            return interaction.reply({ content: '❌ هذه الأزرار مخصصة للإدارة فقط!', ephemeral: true });
+            await interaction.reply({ content: '🔒 جاري إغلاق وحذف هذه التذكرة خلال 5 ثوانٍ...' });
+            setTimeout(async () => {
+                try { await interaction.channel.delete(); } catch (err) { }
+            }, 5000);
         }
 
-        const action = interaction.customId;
+        // عند الضغط على Check a user تظهر اللوحة التفاعلية العصرية (مطابقة للصورة تماماً)
+        else if (interaction.customId === 'open_checker_interactive') {
+            activeCheckSessions.set(interaction.user.id, { suspectId: null, platform: null });
 
-        if (action === 'check_clean') {
-            await interaction.update({ content: `🟢 **تم تحديد الحالة بواسطة ${interaction.user}: اللاعب نظيف (Clean)!**`, components: [] });
-        } else if (action === 'check_cheater') {
-            await interaction.update({ content: `🔴 **تم تحديد الحالة بواسطة ${interaction.user}: ثبت أنه غشاش (Cheater)!**`, components: [] });
-        } else if (action === 'check_cancel') {
-            await interaction.update({ content: `❌ **تم إلغاء البلاغ بواسطة ${interaction.user}.**`, components: [] });
-        } else if (action === 'check_kick') {
-            await interaction.update({ content: `👢 **تم إغلاق البلاغ.** (قم بسحب العضو أو حظره يدوياً).`, components: [] });
+            const panelEmbed = new EmbedBuilder()
+                .setColor('#2f3136')
+                .setTitle('New Player Check')
+                .setDescription('Search And Pick The Player, Choose Their Device, Then Send The Request To The Check Room.');
+
+            const userSelect = new UserSelectMenuBuilder()
+                .setCustomId('select_suspect_user')
+                .setPlaceholder('Search & pick the player to check...')
+                .setMinValues(1)
+                .setMaxValues(1);
+
+            const platformSelect = new StringSelectMenuBuilder()
+                .setCustomId('select_suspect_platform')
+                .setPlaceholder('Select device: PC or Phone')
+                .addOptions([
+                    { label: 'PC', description: 'Plays on PC', value: 'PC', emoji: '💻' },
+                    { label: 'Phone', description: 'Plays on Phone / Mobile', value: 'Phone', emoji: '📱' }
+                ]);
+
+            const submitButton = new ButtonBuilder()
+                .setCustomId('submit_final_check')
+                .setLabel('Send Check')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🚀');
+
+            const row1 = new ActionRowBuilder().addComponents(userSelect);
+            const row2 = new ActionRowBuilder().addComponents(platformSelect);
+            const row3 = new ActionRowBuilder().addComponents(submitButton);
+
+            await interaction.reply({
+                embeds: [panelEmbed],
+                components: [row1, row2, row3],
+                ephemeral: true
+            });
         }
+
+        // عند الضغط على زر إرسال البلاغ النهائي
+        else if (interaction.customId === 'submit_final_check') {
+            const session = activeCheckSessions.get(interaction.user.id);
+
+            if (!session || !session.suspectId || !session.platform) {
+                return interaction.reply({ content: '❌ يجب عليك اختيار اللاعب أولاً وتحديد المنصة (PC أو Phone)!', ephemeral: true });
+            }
+
+            const reporter = interaction.user;
+            const suspectMember = await interaction.guild.members.fetch(session.suspectId).catch(() => null);
+            const suspectName = suspectMember ? `<@${suspectMember.id}>` : 'Unknown User';
+
+            await interaction.update({
+                content: `🛡️ **تم إرسال بلاغ الفحص بنجاح إلى غرفة الإدارة!**`,
+                embeds: [],
+                components: []
+            });
+
+            const adminChannel = interaction.guild.channels.cache.find(c => c.name === 'check-place-user') || interaction.channel;
+
+            const reportEmbed = new EmbedBuilder()
+                .setColor('#ffaa00')
+                .setTitle('🚨 NEW PLAYER CHECK REPORT 🚨')
+                .addFields(
+                    { name: '👤 المبلغ (Reporter)', value: `${reporter} (${reporter.username})`, inline: false },
+                    { name: '🎯 المشتبه به (Suspect)', value: `${suspectName}`, inline: true },
+                    { name: '💻 المنصة (Platform)', value: `\`${session.platform}\``, inline: true }
+                )
+                .setFooter({ text: 'DEBBABI CHEAT • Admin Control Panel', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            const adminActionRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId('check_clean').setLabel('Clean').setStyle(ButtonStyle.Success).setEmoji('🟢'),
+                new ButtonBuilder().setCustomId('check_cheater').setLabel('Cheater').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
+                new ButtonBuilder().setCustomId('check_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary).setEmoji('❌'),
+                new ButtonBuilder().setCustomId('check_kick').setLabel('Kick User').setStyle(ButtonStyle.Danger).setEmoji('👢')
+            );
+
+            await adminChannel.send({
+                content: `📢 **تنبيه إداري جديد:** ${reporter} قام بالإبلاغ عن لاعب!`,
+                embeds: [reportEmbed],
+                components: [adminActionRow]
+            });
+
+            activeCheckSessions.delete(interaction.user.id);
+        }
+
+        else if (['check_clean', 'check_cheater', 'check_cancel', 'check_kick'].includes(interaction.customId)) {
+            if (!interaction.member.permissions.has('Administrator')) {
+                return interaction.reply({ content: '❌ هذه الأزرار مخصصة للإدارة فقط!', ephemeral: true });
+            }
+
+            const action = interaction.customId;
+
+            if (action === 'check_clean') {
+                await interaction.update({ content: `🟢 **تم تحديد الحالة بواسطة ${interaction.user}: اللاعب نظيف (Clean)!**`, components: [] });
+            } else if (action === 'check_cheater') {
+                await interaction.update({ content: `🔴 **تم تحديد الحالة بواسطة ${interaction.user}: ثبت أنه غشاش (Cheater)!**`, components: [] });
+            } else if (action === 'check_cancel') {
+                await interaction.update({ content: `❌ **تم إلغاء البلاغ بواسطة ${interaction.user}.**`, components: [] });
+            } else if (action === 'check_kick') {
+                await interaction.update({ content: `👢 **تم إغلاق البلاغ.** (قم بسحب العضو يدوياً).`, components: [] });
+            }
+        }
+    }
+
+    // التقاط تفاعلات القوائم المنسدلة (User Select & String Select)
+    else if (interaction.isUserSelectMenu() && interaction.customId === 'select_suspect_user') {
+        let session = activeCheckSessions.get(interaction.user.id) || { suspectId: null, platform: null };
+        session.suspectId = interaction.values[0];
+        activeCheckSessions.set(interaction.user.id, session);
+
+        await interaction.update({ content: `✅ تم اختيار اللاعب بنجاح. اختر المنصة الآن واضغط Send Check.` }).catch(() => { });
+    }
+
+    else if (interaction.isStringSelectMenu() && interaction.customId === 'select_suspect_platform') {
+        let session = activeCheckSessions.get(interaction.user.id) || { suspectId: null, platform: null };
+        session.platform = interaction.values[0];
+        activeCheckSessions.set(interaction.user.id, session);
+
+        await interaction.update({ content: `✅ تم اختيار المنصة: **${session.platform}**. اضغط الآن على Send Check لإرسال البلاغ.` }).catch(() => { });
     }
 });
 
