@@ -1650,7 +1650,7 @@ client.on('interactionCreate', async interaction => {
                     return interaction.editReply({ content: '✅ تم فتح تصويت الـ MVP للفريق الفائز بنجاح!' });
                 }
 
-                // 2. تصويت MVP Losers (إذا أراد أحد فتحه يدوياً)
+                // 2. تصويت MVP Losers
                 if (selectedAction === 'mvp_losers') {
                     if (!isParticipant && !isAdmin) {
                         return interaction.editReply({ content: '❌ فقط المشاركون في المباراة أو الإدارة يمكنهم التصويت!' });
@@ -1660,6 +1660,8 @@ client.on('interactionCreate', async interaction => {
                         return interaction.editReply({ content: '⚠️ يجب التصويت على الفريق الفائز أولاً (MVP Winners) لتحديد الفريق الخاسر!' });
                     }
 
+                    match.loserVotes = new Map();
+                    match.votingCompleted = false;
                     const loserSelect = buildLoserSelectMenu(match, interaction.guild);
                     await interaction.channel.send({
                         content: `**Mvp loser vote :**\n${allPlayers.map(uid => `<@${uid}>`).join(' ')}`,
@@ -1817,14 +1819,7 @@ client.on('interactionCreate', async interaction => {
 
                 await interaction.channel.send({ embeds: [winnerSelectedEmbed] });
                 await interaction.channel.send({
-                    content: `👾 **MVP Winners Selected!**\n\n<@${match.winningMvpUid}> has been voted as MVP Winners.\nMVP points will be awarded after **both** MVPs are selected.`
-                });
-
-                // الانتقال التلقائي الفوري لتصويت الـ MVP الخاسر (Mvp loser vote)
-                const loserSelect = buildLoserSelectMenu(match, interaction.guild);
-                await interaction.channel.send({
-                    content: `**Mvp loser vote :**\n${allPlayers.map(uid => `<@${uid}>`).join(' ')}`,
-                    components: [new ActionRowBuilder().addComponents(loserSelect)]
+                    content: `👾 **MVP Winners Selected!**\n\n<@${match.winningMvpUid}> has been voted as MVP Winners.\n👉 Please choose **MVP Losers** from the Select Action menu above to start the losing team vote.`
                 });
                 saveMatchToDb(match);
                 return;
@@ -1902,6 +1897,8 @@ client.on('interactionCreate', async interaction => {
 
                 match.losingMvpUid = topLoser;
                 saveMatchToDb(match);
+
+                const loserVotersMentions = Array.from(match.loserVotes.keys()).map(id => `<@${id}>`).join(', ');
 
                 const loserSelectedEmbed = new EmbedBuilder()
                     .setColor('#2b2d31')
@@ -2413,6 +2410,12 @@ async function startMatch(guild, match) {
                     description: 'Vote for the best player from winning team',
                     value: 'mvp_winners',
                     emoji: '👾'
+                },
+                {
+                    label: 'MVP Losers',
+                    description: 'Vote for the best player from losing team',
+                    value: 'mvp_losers',
+                    emoji: '🔴'
                 },
                 {
                     label: 'Call Staff',
