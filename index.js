@@ -77,7 +77,7 @@ db.serialize(() => {
 
     requiredColumns.forEach(col => {
         db.run(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type}`, (err) => {
-            // تجاهل الخطأ إن كان موجوداً
+            // تجاهل إن كان موجوداً
         });
     });
 });
@@ -337,7 +337,7 @@ client.once('clientReady', async () => {
     }
 });
 
-// معالجة الرسائل العادية (XP وأوامر البرفكس)
+// معالجة الرسائل العادية
 client.on('messageCreate', async message => {
     if (message.author.bot || !message.guild) return;
 
@@ -439,14 +439,15 @@ client.on('messageCreate', async message => {
             team1: [],
             team2: [],
             state: 'WAITING_INFO',
+            promptMessageId: null,
             lobbyMessageId: null,
             threadId: null,
             team1VoiceId: null,
             team2VoiceId: null,
             infoTimeout: null,
             lobbyTimeout: null,
-            winnerVotes: new Map(), // userId -> { winningTeam, mvpWinner }
-            loserVotes: new Map(),  // userId -> mvpLoser
+            winnerVotes: new Map(),
+            loserVotes: new Map(),
             votingCompleted: false
         };
 
@@ -467,6 +468,7 @@ client.on('messageCreate', async message => {
         );
 
         const promptMsg = await message.reply({ embeds: [createEmbed], components: [row] });
+        match.promptMessageId = promptMsg.id;
 
         // مهلة 30 ثانية لإدخال معلومات الروم
         match.infoTimeout = setTimeout(async () => {
@@ -716,7 +718,7 @@ client.on('interactionCreate', async interaction => {
                 const voiceChannel = interaction.member?.voice?.channel;
                 if (!voiceChannel || !voiceChannel.name.toLowerCase().includes('waiting')) {
                     return interaction.reply({ 
-                        content: '❌ **يجب أن تكون متواجداً في إحدى غرف الانتظار (waiting 1 / waiting 2 / waiting 3...) أولاً** حتى يتمكن البوت من نقلك تلقائياً إلى غرف اللعب عند اكتمال الفرق!', 
+                        content: '❌ **يجب أن تكون متواجداً في إحدى غرف الانتظار (waiting 1 / waiting 2 / waiting 3...) أولاً** حتى يتمكن البوت من نقلك تلقائياً عند اكتمال الفرق!', 
                         ephemeral: true 
                     });
                 }
@@ -946,6 +948,14 @@ client.on('interactionCreate', async interaction => {
                 }
 
                 if (match.infoTimeout) clearTimeout(match.infoTimeout);
+
+                // حذف رسالة الإنشاء الأولية (Create Match Prompt) لتختفي فوراً
+                if (match.promptMessageId) {
+                    const promptMsg = await interaction.channel.messages.fetch(match.promptMessageId).catch(() => null);
+                    if (promptMsg) {
+                        await promptMsg.delete().catch(() => {});
+                    }
+                }
 
                 match.roomId = roomId;
                 match.password = password;
@@ -1241,7 +1251,7 @@ async function handleTeamJoin(interaction, match, teamNum) {
     }
 }
 
-// بناء رسالة اللوبي بتصميم أنيق ومقاس مناسب
+// بناء رسالة اللوبي بتصميم عريض ومطابق 100% للشاشات الأصلية
 function buildLobbyEmbed(match, guild) {
     const t1List = match.team1.length > 0 
         ? match.team1.map(id => `<@${id}>`).join('\n') 
@@ -1251,35 +1261,42 @@ function buildLobbyEmbed(match, guild) {
         ? match.team2.map(id => `<@${id}>`).join('\n') 
         : '*No players yet*';
 
+    const divider = '────────────────────────────────────────';
+
     return new EmbedBuilder()
-        .setColor('#2b2d31')
+        .setColor('#2f3136')
         .setTitle(`👾 Free Fire ${match.mode} Match`)
-        .setDescription(`| Match started by <@${match.hostId}>`)
-        .addFields(
-            { name: `🔴 Team 1 (${match.team1.length}/${match.teamSize})`, value: t1List, inline: false },
-            { name: `🟢 Team 2 (${match.team2.length}/${match.teamSize})`, value: t2List, inline: false }
-        )
+        .setDescription(`| Match started by <@${match.hostId}>\n\n${divider}\n\n🔴 **Team 1 (${match.team1.length}/${match.teamSize})**\n${t1List}\n\n🟢 **Team 2 (${match.team2.length}/${match.teamSize})**\n${t2List}\n\n${divider}`)
         .setFooter({ text: 'Apostado Manager • Match Lobby' });
 }
 
+// بناء أزرار اللوبي مع تعطيل الزر في حال امتلاء الفريق
 function buildLobbyButtons(match) {
+    const isT1Full = match.team1.length >= match.teamSize;
+    const isT2Full = match.team2.length >= match.teamSize;
+    const isAllFull = isT1Full && isT2Full;
+
     return new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId(`join_team1_${match.id}`)
             .setLabel('Join Team 1')
-            .setStyle(ButtonStyle.Danger),
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(isT1Full),
         new ButtonBuilder()
             .setCustomId(`join_team2_${match.id}`)
             .setLabel('Join Team 2')
-            .setStyle(ButtonStyle.Success),
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(isT2Full),
         new ButtonBuilder()
             .setCustomId(`leave_match_${match.id}`)
             .setLabel('Leave')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(isAllFull),
         new ButtonBuilder()
             .setCustomId(`cancel_match_${match.id}`)
             .setLabel('Cancel Game')
             .setStyle(ButtonStyle.Danger)
+            .setDisabled(isAllFull)
     );
 }
 
@@ -1306,9 +1323,12 @@ async function startMatch(guild, match) {
         const playChannel = await guild.channels.fetch(match.channelId).catch(() => null);
         if (!playChannel) return;
 
+        // تحديث رسالة اللوبي لتعطيل جميع الأزرار
+        await updateLobbyMessage(guild, match);
+
         // 1. إرسال رسالة Match Ready في شات اللعب
         const readyEmbed = new EmbedBuilder()
-            .setColor('#2b2d31')
+            .setColor('#2f3136')
             .setTitle('✔ Match Ready!')
             .setDescription('Moving players to voice channels...')
             .setFooter({ text: new Date().toLocaleString() });
