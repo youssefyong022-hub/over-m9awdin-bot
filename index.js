@@ -41,7 +41,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
 )`);
 
 client.once('clientReady', async () => {
-    console.log(`Logged in as ${client.user.tag} (Stable Mode)`);
+    console.log(`Logged in as ${client.user.tag} (Full Production Mode)`);
 
     const commands = [
         new SlashCommandBuilder()
@@ -218,7 +218,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
     }
 
-    // أمر لوحة الفحص المطابق تماماً
+    // أمر لوحة الفحص بالتصميم الاحترافي المطلوب
     if (commandName === 'checker') {
         if (!interaction.member.permissions.has('Administrator')) {
             return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -229,7 +229,7 @@ client.on('interactionCreate', async interaction => {
         const checkerEmbed = new EmbedBuilder()
             .setColor('#2f3136')
             .setTitle('🔍 User Check System')
-            .setDescription('Report suspicious players for staff verification.\n\n🚨 **How it works**\n• Press **Check a user** to report a suspicious player.\n• Enter the player name/ID, platform, and reason.\n• The request is sent securely to the check-room for staff review.')
+            .setDescription('Report suspicious players for staff verification.\n\n🚨 **How it works**\n• Press **Check a user** → open report form.\n• Enter player name/ID, platform, and reason.\n• The request is sent securely to the check-room for staff review.\n\n⚠️ **Important**\nOnly report with a valid reason. Abuse may result in a penalty.')
             .setFooter({ text: 'DEBBABI CHEAT • Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
@@ -242,7 +242,7 @@ client.on('interactionCreate', async interaction => {
         );
 
         await targetChannel.send({ embeds: [checkerEmbed], components: [checkerRow] });
-        await interaction.reply({ content: `✅ تم إرسال لوحة الفحص بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
+        await interaction.reply({ content: `✅ تم إرسال لوحة الفحص الاحترافية بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
     }
 });
 
@@ -298,7 +298,7 @@ client.on('interactionCreate', async interaction => {
         }, 5000);
     }
 
-    // زر فتح نافذة الشكوى المستقرة تماماً وبدون أي أخطاء
+    // زر فتح نافذة الشكوى الاحترافية
     else if (interaction.isButton() && interaction.customId === 'open_checker_modal') {
         const modal = new ModalBuilder()
             .setCustomId('checker_submission_modal')
@@ -334,7 +334,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
     }
 
-    // معالجة إرسال النافذة وإرسالها فوراً لغرفة الإدارة مع أزرار التحكم
+    // إرسال البلاغ لغرفة الإدارة check-place-user مع الأزرار
     else if (interaction.isModalSubmit() && interaction.customId === 'checker_submission_modal') {
         const suspect = interaction.fields.getTextInputValue('suspect_user_name');
         const platform = interaction.fields.getTextInputValue('suspect_platform');
