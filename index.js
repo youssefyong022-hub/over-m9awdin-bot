@@ -3,14 +3,14 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('OVER M9AWDIN Bot is alive and running 24/7!');
+    res.send('DEBBABI CHEAT Bot is alive and running 24/7!');
 });
 
 app.listen(port, () => {
     console.log(`Web server is listening on port ${port}`);
 });
 
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle, UserSelectMenuBuilder } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
 require('dotenv').config();
 
@@ -76,7 +76,7 @@ client.once('clientReady', async () => {
             ),
         new SlashCommandBuilder()
             .setName('checker')
-            .setDescription('إرسال لوحة فحص اللاعبين والغشاشين الضخمة')
+            .setDescription('إرسال لوحة فحص اللاعبين والغشاشين الاحترافية')
             .addChannelOption(option =>
                 option.setName('channel')
                     .setDescription('القناة التي ستُرسل فيها لوحة الفحص')
@@ -156,7 +156,7 @@ client.on('interactionCreate', async interaction => {
                     { name: '📅 Joined Server', value: `${joinedDate}`, inline: false },
                     { name: '🎭 Roles', value: roles, inline: false }
                 )
-                .setFooter({ text: `OVER M9AWDIN • Management System`, iconURL: interaction.guild.iconURL() })
+                .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
                 .setTimestamp();
 
             await interaction.reply({ embeds: [embed] }).catch(() => { });
@@ -182,7 +182,7 @@ client.on('interactionCreate', async interaction => {
                     { name: '📊 Server Rank', value: `#1`, inline: true },
                     { name: '📈 Next Level', value: `${xp} / ${requiredXp} XP`, inline: false }
                 )
-                .setFooter({ text: `OVER M9AWDIN • Management System`, iconURL: interaction.guild.iconURL() })
+                .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
                 .setTimestamp();
 
             await interaction.reply({ embeds: [embed] }).catch(() => { });
@@ -191,7 +191,7 @@ client.on('interactionCreate', async interaction => {
 
     if (commandName === 'rules') {
         const rulesText = `
-╭━━━ 🛡️ **[ OVER M9AWDIN - SERVER RULES ]** 🛡️ ━━━╮
+╭━━━ 🛡️ **[ DEBBABI CHEAT - SERVER RULES ]** 🛡️ ━━━╮
 
 ✨ **أهلاً بك يا بطل في مجتمعنا الرسمي!** ✨
 لضمان بيئة آمنة، ممتعة، ومنظمة للجميع، نرجو الالتزام بالقوانين التالية:
@@ -212,13 +212,12 @@ client.on('interactionCreate', async interaction => {
 ---
 
 ### 🔥 **التعاون والتواصل (Support & Collab)**
-* 💬 **الالتزام بالقنوات المخصصة:** ضع كل موضوع في مكانه الصحيح (السوالف، الدعم، الأوامر).
+* 💬 **الالتزام بالقنوات المخصصة:** ضع كل موضوع في مكانه الصحيح.
 * 🎙️ **احترام الرومات الصوتية:** عدم إزعاج الأعضاء الآخرين في الغرف الصوتية.
-* 🏆 **النتيجة:** مخالفتك لهذه القوانين قد تعرضك للعقوبات (تحذير، ميوت، أو كيك).
 
 🚀 **معاً نبني أفخم وأقوى مجتمع! التزم بالقوانين واستمتع بوقتك.**
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📌 **OVER M9AWDIN • Management System**
+📌 **DEBBABI CHEAT • Management System**
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
         `;
 
@@ -244,7 +243,7 @@ client.on('interactionCreate', async interaction => {
                 { name: '🛡️ Granted Role', value: `<@&${role.id}>`, inline: true },
                 { name: '👑 Managed By', value: `<@${interaction.user.id}>`, inline: true }
             )
-            .setFooter({ text: `OVER M9AWDIN • Management System`, iconURL: interaction.guild.iconURL() })
+            .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed] }).catch(() => { });
@@ -269,7 +268,7 @@ client.on('interactionCreate', async interaction => {
                 { name: '🛡️ Removed Role', value: `<@&${role.id}>`, inline: true },
                 { name: '👑 Managed By', value: `<@${interaction.user.id}>`, inline: true }
             )
-            .setFooter({ text: `OVER M9AWDIN • Management System`, iconURL: interaction.guild.iconURL() })
+            .setFooter({ text: `DEBBABI CHEAT • Management System`, iconURL: interaction.guild.iconURL() })
             .setTimestamp();
 
         await interaction.reply({ embeds: [embed] }).catch(() => { });
@@ -309,6 +308,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
     }
 
+    // أمر لوحة الفحص بنفس تصميم الصورة تماماً
     if (commandName === 'checker') {
         if (!interaction.member.permissions.has('Administrator')) {
             return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -316,50 +316,23 @@ client.on('interactionCreate', async interaction => {
 
         const targetChannel = interaction.options.getChannel('channel');
 
-        const bigCheckerEmbed = new EmbedBuilder()
-            .setColor('#1f1e24')
-            .setTitle('🏆 ══════════════════════════════ 🏆\n               DEBBABI CHEAT — PLAYER VERIFICATION\n🏆 ══════════════════════════════ 🏆')
-            .setDescription('**Welcome to the official security and anti-cheat tracking center.**\nOur automated and staff-monitored detection systems ensure a fair, competitive environment for everyone.\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━')
-            .addFields(
-                {
-                    name: '📋 **How the Verification Process Works:**',
-                    value: '• Click the **"Check a user"** button below to initiate a verification report.\n• Input the exact **Player ID / Username** and select their platform (**PC** or **Phone**).\n• Our moderation team will immediately review the case and move them to verification channels.',
-                    inline: false
-                },
-                {
-                    name: '⚖️ **Rewards & Penalties System:**',
-                    value: '🔸 **Cheater Confirmed:** The reporter receives bonus points & reputation.\n🔸 **Player Clean:** Streak resets; false reports may be penalized.\n🔸 **Security Status:** All checks are securely logged in our database.',
-                    inline: false
-                },
-                {
-                    name: '📊 **Live Server Statistics:**',
-                    value: '```yaml\n[Pending Checks]  : 0\n[Cheaters Banned] : 0\n[Clean Players]   : 0\n[System Status]   : ONLINE & SECURE\n```',
-                    inline: false
-                }
-            )
-            .setFooter({ text: 'DEBBABI CHEAT • Advanced Anti-Cheat & Tournament Division', iconURL: client.user.displayAvatarURL() })
+        const checkerEmbed = new EmbedBuilder()
+            .setColor('#2f3136')
+            .setTitle('🔍 User Check System')
+            .setDescription('Report suspicious players for staff verification.\n\n🚨 **How it works**\n• Press **Check a user** → a member picker opens with all server players.\n• Search by name, pick the player, then choose their device (**PC** or **Phone**).\n• The request is sent to the check-room with all details.\n• Staff choose **Cheater** or **Clean** — cheaters are auto-blacklisted 45 days.\n\n⚠️ **Important**\nOnly report with a valid reason. Abuse may result in a penalty.')
+            .setFooter({ text: 'DEBBABI CHEAT • Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
         const checkerRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('open_checker_modal')
                 .setLabel('Check a user')
-                .setStyle(ButtonStyle.Danger)
-                .setEmoji('🔍'),
-            new ButtonBuilder()
-                .setCustomId('view_checker_reports')
-                .setLabel('See my reports')
                 .setStyle(ButtonStyle.Secondary)
-                .setEmoji('📋'),
-            new ButtonBuilder()
-                .setCustomId('checker_leaderboard')
-                .setLabel('Top Checkers')
-                .setStyle(ButtonStyle.Success)
-                .setEmoji('🏆')
+                .setEmoji('🔍')
         );
 
-        await targetChannel.send({ embeds: [bigCheckerEmbed], components: [checkerRow] });
-        await interaction.reply({ content: `✅ تم إرسال اللوحة الكبرى بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
+        await targetChannel.send({ embeds: [checkerEmbed], components: [checkerRow] });
+        await interaction.reply({ content: `✅ تم إرسال لوحة الفحص الاحترافية بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
     }
 });
 
@@ -394,7 +367,7 @@ client.on('interactionCreate', async interaction => {
                     { name: '📂 القسم', value: ticketType, inline: true },
                     { name: '🆔 رقم التذكرة', value: `TTE-${Math.random().toString(36).substring(2, 9).toUpperCase()}`, inline: true }
                 )
-                .setFooter({ text: 'OVER M9AWDIN • Support System', iconURL: client.user.displayAvatarURL() })
+                .setFooter({ text: 'DEBBABI CHEAT • Support System', iconURL: client.user.displayAvatarURL() })
                 .setTimestamp();
 
             const ticketControlRow = new ActionRowBuilder().addComponents(
@@ -434,30 +407,30 @@ client.on('interactionCreate', async interaction => {
         }, 5000);
     }
 
-    // زر فتح نافذة الشكوى (Check a user)
+    // زر فتح نافذة الشكوى مع قائمة اختيار الأعضاء (User Select Menu)
     else if (interaction.isButton() && interaction.customId === 'open_checker_modal') {
         const modal = new ModalBuilder()
             .setCustomId('checker_submission_modal')
             .setTitle('DEBBABI CHEAT — Suspect Report');
 
         const userInput = new TextInputBuilder()
-            .setCustomId('suspect_user_id')
-            .setLabel('Player ID or Username')
-            .setPlaceholder('أدخل اسم أو آيدي اللاعب المشتبه به...')
+            .setCustomId('suspect_user_name')
+            .setLabel('Player Name or ID')
+            .setPlaceholder('اكتب اسم أو آيدي اللاعب المشتبه به...')
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
         const platformInput = new TextInputBuilder()
             .setCustomId('suspect_platform')
-            .setLabel('Platform (PC / Phone)')
-            .setPlaceholder('اكتب PC أو Phone...')
+            .setLabel('Platform (PC or Phone)')
+            .setPlaceholder('اختر PC أو Phone...')
             .setStyle(TextInputStyle.Short)
             .setRequired(true);
 
         const reasonInput = new TextInputBuilder()
             .setCustomId('suspect_reason')
-            .setLabel('Reason / Notes (Optional)')
-            .setPlaceholder('اكتب سبب الاشتباه باختصار...')
+            .setLabel('Reason / Notes')
+            .setPlaceholder('اكتب سبب الاشتباه هنا...')
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(false);
 
@@ -470,20 +443,18 @@ client.on('interactionCreate', async interaction => {
         await interaction.showModal(modal);
     }
 
-    // استقبال بيانات النافذة وإرسالها إلى غرفة خاصة للإدارة مع أزرار القرار
+    // استقبال نموذج الشكوى وإرساله إلى غرفة الإدارة check-place-user
     else if (interaction.isModalSubmit() && interaction.customId === 'checker_submission_modal') {
-        const suspect = interaction.fields.getTextInputValue('suspect_user_id');
+        const suspect = interaction.fields.getTextInputValue('suspect_user_name');
         const platform = interaction.fields.getTextInputValue('suspect_platform');
         const reason = interaction.fields.getTextInputValue('suspect_reason') || 'No reason provided';
         const reporter = interaction.user;
 
-        // إرسال رد مؤقت ومخفي للاعب الذي قام بالبلاغ
         await interaction.reply({
-            content: `🛡️ **تم إرسال بلاغك بنجاح إلى لجنة الفحص!**\n\n👤 **المشتبه به:** \`${suspect}\`\n💻 **المنصة:** \`${platform}\``,
+            content: `🛡️ **تم تسجيل بلاغ الفحص بنجاح في النظام العسكري!**\n\n👤 **المشتبه به:** \`${suspect}\`\n💻 **المنصة:** \`${platform}\`\n\n⏳ **سيتم تحويل الملف إلى لجنة الفحص فوراً.**`,
             ephemeral: true
         });
 
-        // ابحث عن قناة مخصصة للإدارة اسمها check-place-user أو أرسلها في نفس الروم (أو القناة الحالية إذا كنت تريدها لك وحدك)
         const adminChannel = interaction.guild.channels.cache.find(c => c.name === 'check-place-user') || interaction.channel;
 
         const reportEmbed = new EmbedBuilder()
@@ -498,7 +469,6 @@ client.on('interactionCreate', async interaction => {
             .setFooter({ text: 'DEBBABI CHEAT • Admin Control Panel', iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
-        // أزرار التحكم الإدارية (Clean, Cheater, Cancel, Kick)
         const adminActionRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('check_clean')
@@ -529,7 +499,7 @@ client.on('interactionCreate', async interaction => {
         });
     }
 
-    // معالجة أزرار الإدارة (Clean, Cheater, Cancel, Kick)
+    // معالجة الأزرار الإدارية
     else if (interaction.isButton() && ['check_clean', 'check_cheater', 'check_cancel', 'check_kick'].includes(interaction.customId)) {
         if (!interaction.member.permissions.has('Administrator')) {
             return interaction.reply({ content: '❌ هذه الأزرار مخصصة للإدارة فقط!', ephemeral: true });
@@ -554,7 +524,7 @@ client.on('interactionCreate', async interaction => {
             });
         } else if (action === 'check_kick') {
             await interaction.update({
-                content: `👢 **تم إغلاق البلاغ.** (تنبيه: لطرد العضو تأكد من كتابة الآيدي الصحيح أو سحبه يدوياً).`,
+                content: `👢 **تم إغلاق البلاغ.** (تنبيه: قم بسحب العضو أو حظره يدوياً من السيرفر).`,
                 components: []
             });
         }
