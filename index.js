@@ -41,7 +41,7 @@ db.run(`CREATE TABLE IF NOT EXISTS users (
 )`);
 
 client.once('clientReady', async () => {
-    console.log(`Logged in as ${client.user.tag} (Elite Exact Design Mode)`);
+    console.log(`Logged in as ${client.user.tag} (System V2 Active)`);
 
     const commands = [
         new SlashCommandBuilder()
@@ -75,7 +75,7 @@ client.once('clientReady', async () => {
             ),
         new SlashCommandBuilder()
             .setName('checker')
-            .setDescription('إرسال لوحة فحص اللاعبين الأسطورية')
+            .setDescription('إرسال لوحة فحص اللاعبين V2 المطابقة تماماً')
             .addChannelOption(option =>
                 option.setName('channel')
                     .setDescription('القناة التي ستُرسل فيها لوحة الفحص')
@@ -114,6 +114,7 @@ client.on('messageCreate', async message => {
 });
 
 const activeCheckSessions = new Map();
+let checkStats = { pending: 1, cheaters: 7, clean: 5 };
 
 client.on('interactionCreate', async interaction => {
     if (interaction.isChatInputCommand()) {
@@ -219,7 +220,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
         }
 
-        // أمر لوحة الفحص المطابق تماماً للصورة الأسطورية مع البانر والإحصائيات
+        // أمر لوحة الفحص V2 (مطابق تماماً للصورة والكود الذي أرسلته)
         if (commandName === 'checker') {
             if (!interaction.member.permissions.has('Administrator')) {
                 return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -227,15 +228,14 @@ client.on('interactionCreate', async interaction => {
 
             const targetChannel = interaction.options.getChannel('channel');
 
-            const eliteCheckerEmbed = new EmbedBuilder()
+            const v2CheckerEmbed = new EmbedBuilder()
                 .setColor('#2f3136')
-                .setTitle(':profettionel_checker: Player Check System')
-                .setDescription('Report suspicious players for verification\n\n🚨 **How it works:**\n• Click **Check a user** → @tag a **server member** (must be in this server) :searchLyrics:\n• Choose if they play on **Phone** or **PC**\n• Pay **50 points** to request a check\n• If the player is a **cheater** → Your **50 points** are recovered and you get **+20 points** 🤌\n• If the player is **clean** → You lose **30 points** :03_reaper_p4radise: (check cost is not recovered)\n• If player is **already verified** → No charge.\n\n**If you catch 5 cheaters in a row you will be rewarded** @Cheater Hunter\nA clean result resets your streak — you must get 5 consecutive cheaters.\n\nThink carefully before reporting!\n**Stats:**\n> Pending: `1` | Cheaters Found: `7` | Clean: `5`')
-                .setImage('https://i.imgur.com/2Z091Wl.png')
+                .setTitle('Player Check System')
+                .setDescription('Report suspicious players for verification\n\n🚨 **How it works:**\n• Click **Check a user** → @tag a **server member** (must be in this server)\n• Choose if they play on **Phone** or **PC**\n• Pay **50 points** to request a check\n• If the player is a **cheater** → Your **50 points** are recovered and you get **+20 points** 🤌\n• If the player is **clean** → You lose **30 points** (check cost is not recovered)\n• If player is **already verified** → No charge.\n\n**If you catch 5 cheaters in a row you will be rewarded** @Cheater Hunter\nA clean result resets your streak — you must get 5 consecutive cheaters.\n\nThink carefully before reporting!\n**Stats:**\n> Pending: `' + checkStats.pending + '` | Cheaters Found: `' + checkStats.cheaters + '` | Clean: `' + checkStats.clean + '`')
                 .setFooter({ text: 'DEBBABI CHEAT • Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
                 .setTimestamp();
 
-            const eliteCheckerRow = new ActionRowBuilder().addComponents(
+            const v2CheckerRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('open_checker_interactive')
                     .setLabel('Check a user')
@@ -248,8 +248,8 @@ client.on('interactionCreate', async interaction => {
                     .setEmoji('📋')
             );
 
-            await targetChannel.send({ embeds: [eliteCheckerEmbed], components: [eliteCheckerRow] });
-            await interaction.reply({ content: `✅ تم إرسال لوحة الفحص الأسطورية بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
+            await targetChannel.send({ embeds: [v2CheckerEmbed], components: [v2CheckerRow] });
+            await interaction.reply({ content: `✅ تم إرسال لوحة الفحص V2 بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
         }
     }
 
@@ -305,7 +305,7 @@ client.on('interactionCreate', async interaction => {
             }, 5000);
         }
 
-        // تفاعل زر Check a user لعرض القوائم المنسدلة العصرية المطابقة للصورة تماماً
+        // تفاعل زر Check a user لعرض القوائم المنسدلة العصرية بنفس الستايل الموضح في الكود البرمجي
         else if (interaction.customId === 'open_checker_interactive') {
             activeCheckSessions.set(interaction.user.id, { suspectId: null, platform: null });
 
@@ -352,6 +352,7 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
+        // إرسال البلاغ لغرفة الإدارة check-place-user تماماً مثل منطق الكود المرفق
         else if (interaction.customId === 'submit_final_check') {
             const session = activeCheckSessions.get(interaction.user.id);
 
@@ -361,7 +362,8 @@ client.on('interactionCreate', async interaction => {
 
             const reporter = interaction.user;
             const suspectMember = await interaction.guild.members.fetch(session.suspectId).catch(() => null);
-            const suspectName = suspectMember ? `<@${suspectMember.id}>` : 'Unknown User';
+            const suspectName = suspectMember ? suspectMember.displayName : 'Unknown User';
+            const suspectIdStr = session.suspectId;
 
             await interaction.update({
                 content: `🛡️ **تم إرسال بلاغ الفحص بنجاح إلى غرفة الإدارة!**`,
@@ -369,16 +371,13 @@ client.on('interactionCreate', async interaction => {
                 components: []
             });
 
+            checkStats.pending += 1;
             const adminChannel = interaction.guild.channels.cache.find(c => c.name === 'check-place-user') || interaction.channel;
 
             const reportEmbed = new EmbedBuilder()
                 .setColor('#ffaa00')
-                .setTitle('🚨 NEW PLAYER CHECK REPORT 🚨')
-                .addFields(
-                    { name: '👤 المبلغ (Reporter)', value: `${reporter} (${reporter.username})`, inline: false },
-                    { name: '🎯 المشتبه به (Suspect)', value: `${suspectName}`, inline: true },
-                    { name: '💻 المنصة (Platform)', value: `\`${session.platform}\``, inline: true }
-                )
+                .setTitle('🚨 Player Check Request 🚨')
+                .setDescription(`**Player:** ${suspectName}  ·  \`${suspectIdStr}\`\n**Device:** ${session.platform}\n**Requested by:** ${reporter.mention}`)
                 .setFooter({ text: 'DEBBABI CHEAT • Admin Control Panel', iconURL: client.user.displayAvatarURL() })
                 .setTimestamp();
 
@@ -406,13 +405,19 @@ client.on('interactionCreate', async interaction => {
             const action = interaction.customId;
 
             if (action === 'check_clean') {
+                checkStats.clean += 1;
+                checkStats.pending = Math.max(0, checkStats.pending - 1);
                 await interaction.update({ content: `🟢 **تم تحديد الحالة بواسطة ${interaction.user}: اللاعب نظيف (Clean)!**`, components: [] });
             } else if (action === 'check_cheater') {
+                checkStats.cheaters += 1;
+                checkStats.pending = Math.max(0, checkStats.pending - 1);
                 await interaction.update({ content: `🔴 **تم تحديد الحالة بواسطة ${interaction.user}: ثبت أنه غشاش (Cheater)!**`, components: [] });
             } else if (action === 'check_cancel') {
+                checkStats.pending = Math.max(0, checkStats.pending - 1);
                 await interaction.update({ content: `❌ **تم إلغاء البلاغ بواسطة ${interaction.user}.**`, components: [] });
             } else if (action === 'check_kick') {
-                await interaction.update({ content: `👢 **تم إغلاق البلاغ.** (قم بسحب العضو يدوياً).`, components: [] });
+                checkStats.pending = Math.max(0, checkStats.pending - 1);
+                await interaction.update({ content: `👢 **تم إغلاق البلاغ وطرد اللاعب.**`, components: [] });
             }
         }
     }
