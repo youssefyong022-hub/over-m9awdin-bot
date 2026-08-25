@@ -1407,7 +1407,7 @@ async function startMatch(guild, match) {
             .setDescription('Moving players to voice channels...')
             .setFooter({ text: new Date().toLocaleString() });
 
-        await playChannel.send({ embeds: [readyEmbed] });
+        const readyMsg = await playChannel.send({ embeds: [readyEmbed] });
 
         // 2. البحث عن غرفتين فارغتين Team 1 و Team 2
         const t1Channels = guild.channels.cache.filter(c => c.type === ChannelType.GuildVoice && c.name.toLowerCase().includes('team 1')).sort((a, b) => a.position - b.position);
@@ -1534,6 +1534,14 @@ async function startMatch(guild, match) {
         }
 
         match.threadId = matchChannel.id;
+
+        // تحديث رسالة Match Ready بالرابط المباشر للروم
+        const readyUpdatedEmbed = new EmbedBuilder()
+            .setColor('#2f3136')
+            .setTitle('✔ Match Ready!')
+            .setDescription(`🎮 **Match Room:** <#${matchChannel.id}>\n🔊 Players moved to voice channels.`)
+            .setFooter({ text: new Date().toLocaleString() });
+        await readyMsg.edit({ embeds: [readyUpdatedEmbed] }).catch(() => {});
 
         // 4. تجميع المنشن (Owners, Staff, Participants)
         const owners = guild.members.cache.filter(m => m.id === guild.ownerId).map(m => `<@${m.id}>`).join(' ') || `<@${guild.ownerId}>`;
