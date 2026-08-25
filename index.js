@@ -1450,36 +1450,97 @@ async function startMatch(guild, match) {
             }
         }
 
-        // 3. إنشاء الثريد الخاص المؤقت للمباراة
-        let thread;
-        try {
-            thread = await playChannel.threads.create({
-                name: `Match ${match.id}`,
-                autoArchiveDuration: 60,
-                type: ChannelType.PrivateThread,
-                reason: `Private thread for Free Fire Match ${match.id}`
-            });
-        } catch (threadErr) {
-            thread = await playChannel.threads.create({
-                name: `Match ${match.id}`,
-                autoArchiveDuration: 60,
-                reason: `Thread for Free Fire Match ${match.id}`
-            });
-        }
+        // 3. إنشاء قناة نصية خاصة مؤقتة للمباراة مع إعطاء صلاحيات كاملة لكل لاعب في Team 1 و Team 2
+        const permissionOverwrites = [
+            {
+                id: guild.id, // @everyone
+                deny: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]
+            },
+            {
+                id: client.user.id, // البوت
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ManageChannels,
+                    PermissionFlagsBits.EmbedLinks,
+                    PermissionFlagsBits.AttachFiles,
+                    PermissionFlagsBits.ReadMessageHistory
+                ]
+            }
+        ];
 
-        match.threadId = thread.id;
-
-        // إضافة المشاركين إلى الثريد
+        // منح كل لاعب في الفريقين صلاحية الرؤية والكتابة الكاملة حتى لو لم يكن لديه أي رتبة في السيرفر
         for (const uid of allParticipants) {
-            await thread.members.add(uid).catch(() => {});
+            permissionOverwrites.push({
+                id: uid,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.AttachFiles,
+                    PermissionFlagsBits.EmbedLinks,
+                    PermissionFlagsBits.AddReactions
+                ]
+            });
         }
+
+        // منح الإدارة صلاحية المراقبة
+        const staffRoles = guild.roles.cache.filter(r => 
+            r.permissions.has(PermissionFlagsBits.Administrator) || 
+            r.permissions.has(PermissionFlagsBits.ManageGuild) ||
+            r.name.toLowerCase().includes('staff') ||
+            r.name.toLowerCase().includes('admin')
+        );
+        for (const role of staffRoles.values()) {
+            permissionOverwrites.push({
+                id: role.id,
+                allow: [
+                    PermissionFlagsBits.ViewChannel,
+                    PermissionFlagsBits.SendMessages,
+                    PermissionFlagsBits.ReadMessageHistory,
+                    PermissionFlagsBits.ManageMessages
+                ]
+            });
+        }
+
+        let matchChannel;
+        try {
+            matchChannel = await guild.channels.create({
+                name: `match-${match.id}`,
+                type: ChannelType.GuildText,
+                parent: playChannel.parentId || undefined,
+                permissionOverwrites: permissionOverwrites,
+                reason: `Match text room for Free Fire Match ${match.id}`
+            });
+        } catch (chanErr) {
+            console.error('Failed to create match text channel, creating thread as fallback:', chanErr);
+            try {
+                matchChannel = await playChannel.threads.create({
+                    name: `Match ${match.id}`,
+                    autoArchiveDuration: 60,
+                    type: ChannelType.PrivateThread,
+                    reason: `Private thread for Free Fire Match ${match.id}`
+                });
+            } catch (threadErr) {
+                matchChannel = await playChannel.threads.create({
+                    name: `Match ${match.id}`,
+                    autoArchiveDuration: 60,
+                    reason: `Thread for Free Fire Match ${match.id}`
+                });
+            }
+            for (const uid of allParticipants) {
+                await matchChannel.members.add(uid).catch(() => {});
+            }
+        }
+
+        match.threadId = matchChannel.id;
 
         // 4. تجميع المنشن (Owners, Staff, Participants)
         const owners = guild.members.cache.filter(m => m.id === guild.ownerId).map(m => `<@${m.id}>`).join(' ') || `<@${guild.ownerId}>`;
         const staffMembers = guild.members.cache.filter(m => m.permissions.has(PermissionFlagsBits.ManageGuild) && !m.user.bot).map(m => `<@${m.id}>`).slice(0, 15).join(' ') || 'None';
         const participantMentions = allParticipants.map(uid => `<@${uid}>`).join(' ');
 
-        await thread.send({
+        await matchChannel.send({
             content: `**Owners Mention**\n${owners}\n\n**Staff Mention**\n${staffMembers}\n\n**Participant Mention**\n${participantMentions}`
         });
 
@@ -1503,7 +1564,7 @@ async function startMatch(guild, match) {
                 .setURL(selectedT2Voice ? `https://discord.com/channels/${guild.id}/${selectedT2Voice.id}` : `https://discord.com/channels/${guild.id}`)
         );
 
-        await thread.send({ embeds: [matchStartedEmbed], components: [voiceButtonsRow] });
+        await matchChannel.send({ embeds: [matchStartedEmbed], components: [voiceButtonsRow] });
 
         // 6. قائمة الإجراءات ومعلومات الروم
         const selectMenu = new StringSelectMenuBuilder()
@@ -1570,7 +1631,7 @@ async function startMatch(guild, match) {
                 .setEmoji('📑')
         );
 
-        await thread.send({
+        await matchChannel.send({
             content: '🪵 **Use the menu below to vote or report problems**',
             embeds: [roomInfoEmbed],
             components: [menuRow, copyInfoRow]
