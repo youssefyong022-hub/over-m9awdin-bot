@@ -80,6 +80,19 @@ client.once('clientReady', async () => {
                 option.setName('channel')
                     .setDescription('القناة التي ستُرسل فيها لوحة الفحص')
                     .setRequired(true)
+            ),
+        new SlashCommandBuilder()
+            .setName('live')
+            .setDescription('إرسال إشعار البث المباشر لسيرفر OVER M9WDN')
+            .addStringOption(option =>
+                option.setName('link')
+                    .setDescription('رابط البث المباشر')
+                    .setRequired(true)
+            )
+            .addStringOption(option =>
+                option.setName('title')
+                    .setDescription('عنوان البث (اختياري)')
+                    .setRequired(false)
             )
     ].map(command => command.toJSON());
 
@@ -220,7 +233,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: `✅ تم إرسال لوحة التذاكر بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
         }
 
-        // أمر لوحة الفحص V2 (مطابق تماماً للصورة والكود الذي أرسلته)
+        // أمر لوحة الفحص V2
         if (commandName === 'checker') {
             if (!interaction.member.permissions.has('Administrator')) {
                 return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
@@ -250,6 +263,31 @@ client.on('interactionCreate', async interaction => {
 
             await targetChannel.send({ embeds: [v2CheckerEmbed], components: [v2CheckerRow] });
             await interaction.reply({ content: `✅ تم إرسال لوحة الفحص V2 بنجاح إلى القناة ${targetChannel}`, ephemeral: true });
+        }
+
+        // أمر إشعار البث المباشر الجديد
+        if (commandName === 'live') {
+            if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return interaction.reply({ content: '❌ هذا الأمر مخصص للإدارة فقط يا أسطى!', ephemeral: true });
+            }
+
+            const streamLink = interaction.options.getString('link');
+            const streamTitle = interaction.options.getString('title') || 'البث المباشر بدأ الان! انضم إلينا';
+            const notifyRoleID = '1536121042383409294';
+
+            const liveEmbed = new EmbedBuilder()
+                .setColor(0xff0055)
+                .setTitle(`🔴 ${streamTitle}`)
+                .setDescription(`**يا شباب، تم فتح البث المباشر الآن!**\n\n> لا تنسوا الدعم والتفاعل يا أبطال.\n\n🔗 **رابط البث:** [اضغط هنا للدخول](${streamLink})`)
+                .setFooter({ text: 'OVER M9WDN • Live Notifications', iconURL: interaction.client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            await interaction.reply({ content: '✅ جاري إرسال إشعار البث بكل فخامة...', ephemeral: true });
+
+            await interaction.channel.send({
+                content: `<@&${notifyRoleID}> 🚀 **هجوم يا رجالة، البث فتح!**`,
+                embeds: [liveEmbed]
+            });
         }
     }
 
@@ -305,7 +343,6 @@ client.on('interactionCreate', async interaction => {
             }, 5000);
         }
 
-        // تفاعل زر Check a user لعرض القوائم المنسدلة العصرية بنفس الستايل الموضح في الكود البرمجي
         else if (interaction.customId === 'open_checker_interactive') {
             activeCheckSessions.set(interaction.user.id, { suspectId: null, platform: null });
 
@@ -352,7 +389,6 @@ client.on('interactionCreate', async interaction => {
             });
         }
 
-        // إرسال البلاغ لغرفة الإدارة check-place-user تماماً مثل منطق الكود المرفق
         else if (interaction.customId === 'submit_final_check') {
             const session = activeCheckSessions.get(interaction.user.id);
 
@@ -377,7 +413,7 @@ client.on('interactionCreate', async interaction => {
             const reportEmbed = new EmbedBuilder()
                 .setColor('#ffaa00')
                 .setTitle('🚨 Player Check Request 🚨')
-                .setDescription(`**Player:** ${suspectName}  ·  \`${suspectIdStr}\`\n**Device:** ${session.platform}\n**Requested by:** ${reporter.mention}`)
+                .setDescription(`**Player:** ${suspectName}  ·  \`${suspectIdStr}\`\n**Device:** ${session.platform}\n**Requested by:** ${reporter}`)
                 .setFooter({ text: 'DEBBABI CHEAT • Admin Control Panel', iconURL: client.user.displayAvatarURL() })
                 .setTimestamp();
 
