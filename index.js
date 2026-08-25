@@ -219,6 +219,45 @@ function loadMatchesFromDb() {
     });
 }
 
+// دالة فحص وجود مباراة حقيقية غير محذوفة للاعب مع تنظيف تلقائي للرومات المحذوفة
+function getRealActiveMatchForUser(guild, userId, excludeMatchId = null) {
+    if (!guild) return null;
+    for (const m of activeMatches.values()) {
+        if (m.guildId === guild.id && (!excludeMatchId || m.id !== excludeMatchId) && (m.team1.includes(userId) || m.team2.includes(userId)) && !m.votingCompleted) {
+            const chId = m.matchChannelId || m.threadId;
+            if (m.state === 'LOBBY' || m.state === 'WAITING_INFO') {
+                const lobbyChannel = guild.channels.cache.get(m.channelId);
+                if (lobbyChannel) return m;
+                else {
+                    activeMatches.delete(m.id);
+                    removeMatchFromDb(m.id);
+                }
+            } else {
+                const matchChannel = guild.channels.cache.get(chId);
+                if (matchChannel) {
+                    return m;
+                } else {
+                    // الروم تم حذفه يدوياً! نقوم بمسح الماتش تلقائياً وفك القفل عن اللاعبين فوراً
+                    activeMatches.delete(m.id);
+                    removeMatchFromDb(m.id);
+                }
+            }
+        }
+    }
+    return null;
+}
+
+// تنظيف تلقائي للمباريات عند قيام الإدارة بحذف أي روم ماتش يدوياً
+client.on('channelDelete', (channel) => {
+    for (const match of activeMatches.values()) {
+        if (match.matchChannelId === channel.id || match.threadId === channel.id || match.channelId === channel.id) {
+            activeMatches.delete(match.id);
+            removeMatchFromDb(match.id);
+            console.log(`Auto-cleaned match ${match.id} because channel ${channel.id} was deleted.`);
+        }
+    }
+});
+
 // دوال مساعدة لقاعدة البيانات
 function getUserStats(userId, guildId) {
     return new Promise((resolve, reject) => {
@@ -526,7 +565,16 @@ client.once('clientReady', async () => {
             .addSubcommand(sub =>
                 sub.setName('list')
                     .setDescription('عرض قائمة اللاعبين المحظورين حالياً والوقت المتبقي')
-            )
+            ),
+        new SlashCommandBuilder()
+            .setName('unblock')
+            .setDescription('فك التعليق أو الحظر عن لاعب فوراً لحل مشكلة الماتشات المعلقة')
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+            .addUserOption(opt => opt.setName('user').setDescription('اللاعب').setRequired(true)),
+        new SlashCommandBuilder()
+            .setName('clearmatches')
+            .setDescription('تنظيف وإعادة ضبط جميع المباريات المعلقة وفك القفل عن جميع اللاعبين')
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -659,6 +707,54 @@ client.on('messageCreate', async message => {
         }
     }
 
+    // أمر فك التعليق عن لاعب !unblock أو !free
+    if (content.toLowerCase().startsWith('!unblock') || content.toLowerCase().startsWith('!free')) {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            return message.reply('❌ هذا الأمر مخصص لطاقم الإدارة فقط!');
+        }
+
+        const parts = content.trim().split(/\s+/);
+        const targetUser = message.mentions.users.first() || (parts[1] ? await client.users.fetch(parts[1]).catch(() => null) : null);
+        if (!targetUser) {
+            return message.reply('ℹ️ **الاستخدام:** `!unblock @user` لفك التعليق أو البلاك ليست عن لاعب');
+        }
+
+        await removeUserBlacklist(targetUser.id, guildId);
+
+        for (const m of activeMatches.values()) {
+            if (m.guildId === guildId) {
+                m.team1 = m.team1.filter(id => id !== targetUser.id);
+                m.team2 = m.team2.filter(id => id !== targetUser.id);
+                if (m.hostId === targetUser.id || (m.team1.length === 0 && m.team2.length === 0)) {
+                    activeMatches.delete(m.id);
+                    removeMatchFromDb(m.id);
+                } else {
+                    saveMatchToDb(m);
+                }
+            }
+        }
+
+        return message.reply(`✅ **تم فك التعليق والحظر عن ${targetUser} بنجاح!** يمكنه الآن إنشاء أو الانضمام لأي مباراة فوراً.`);
+    }
+
+    // أمر مسح جميع المباريات المعلقة وإعادة ضبط السيرفر !clearmatches أو !resetmatches
+    if (content.toLowerCase() === '!clearmatches' || content.toLowerCase() === '!resetmatches') {
+        if (!message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+            return message.reply('❌ هذا الأمر مخصص لطاقم الإدارة فقط!');
+        }
+
+        let count = 0;
+        for (const [id, m] of activeMatches.entries()) {
+            if (m.guildId === guildId) {
+                activeMatches.delete(id);
+                removeMatchFromDb(id);
+                count++;
+            }
+        }
+
+        return message.reply(`🧹 **تم تنظيف جميع المباريات المعلقة (${count}) وفك التعليق عن جميع اللاعبين في السيرفر بنجاح!**`);
+    }
+
     // أمر إنشاء المباريات !play (فقط 2v2, 3v3, 4v4)
     if (content.toLowerCase().startsWith('!play') || content.toLowerCase().startsWith('! play')) {
         // التحقق من البلاك ليست
@@ -667,10 +763,8 @@ client.on('messageCreate', async message => {
             return message.reply(`⛔ **أنت في قائمة الحظر (Blacklist)!**\n⏳ **متبقي على فك الحظر:** \`${formatRemainingTime(bl.remainingMs)}\`\n📝 **السبب:** \`${bl.reason}\``);
         }
 
-        // التحقق من التواجد في مباراة نشطة أخرى لم يكتمل تصويتها
-        const activeMatchForUser = Array.from(activeMatches.values()).find(m => 
-            m.guildId === guildId && (m.team1.includes(userId) || m.team2.includes(userId)) && !m.votingCompleted
-        );
+        // التحقق من التواجد في مباراة نشطة حقيقية لم يكتمل تصويتها (مع تنظيف الرومات المحذوفة تلقائياً)
+        const activeMatchForUser = getRealActiveMatchForUser(message.guild, userId);
         if (activeMatchForUser) {
             const chId = activeMatchForUser.matchChannelId || activeMatchForUser.threadId;
             return message.reply(`❌ **لا يمكنك إنشاء مباراة جديدة!**\nأنت مشارك بالفعل في مباراة نشطة (<#${chId}>) حتى ينتهي التصويت بالكامل.`);
@@ -1043,6 +1137,47 @@ client.on('interactionCreate', async interaction => {
 
                     return interaction.reply({ embeds: [listEmbed] });
                 }
+            }
+
+            if (commandName === 'unblock') {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+                    return interaction.reply({ content: '❌ هذا الأمر مخصص للإدارة فقط!', ephemeral: true });
+                }
+                const targetUser = interaction.options.getUser('user');
+                const guildId = interaction.guild.id;
+
+                await removeUserBlacklist(targetUser.id, guildId);
+
+                for (const m of activeMatches.values()) {
+                    if (m.guildId === guildId) {
+                        m.team1 = m.team1.filter(id => id !== targetUser.id);
+                        m.team2 = m.team2.filter(id => id !== targetUser.id);
+                        if (m.hostId === targetUser.id || (m.team1.length === 0 && m.team2.length === 0)) {
+                            activeMatches.delete(m.id);
+                            removeMatchFromDb(m.id);
+                        } else {
+                            saveMatchToDb(m);
+                        }
+                    }
+                }
+
+                return interaction.reply({ content: `✅ **تم فك التعليق والحظر عن ${targetUser} بنجاح!** يمكنه الآن إنشاء مباريات جديدة أو الانضمام لأي فريق فوراً.` });
+            }
+
+            if (commandName === 'clearmatches') {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+                    return interaction.reply({ content: '❌ هذا الأمر مخصص للإدارة فقط!', ephemeral: true });
+                }
+                const guildId = interaction.guild.id;
+                let count = 0;
+                for (const [id, m] of activeMatches.entries()) {
+                    if (m.guildId === guildId) {
+                        activeMatches.delete(id);
+                        removeMatchFromDb(id);
+                        count++;
+                    }
+                }
+                return interaction.reply({ content: `🧹 **تم تنظيف جميع المباريات المعلقة (${count}) وفك التعليق عن جميع لاعبي السيرفر بنجاح!**` });
             }
         }
 
@@ -1764,10 +1899,8 @@ async function handleTeamJoin(interaction, match, teamNum) {
         });
     }
 
-    // 2. التحقق من التواجد في مباراة أخرى نشطة لم يكتمل تصويتها بعد
-    const activeMatchForUser = Array.from(activeMatches.values()).find(m => 
-        m.guildId === guildId && m.id !== match.id && (m.team1.includes(uid) || m.team2.includes(uid)) && !m.votingCompleted
-    );
+    // 2. التحقق من التواجد في مباراة أخرى نشطة لم يكتمل تصويتها بعد (مع تنظيف الرومات المحذوفة تلقائياً)
+    const activeMatchForUser = getRealActiveMatchForUser(interaction.guild, uid, match.id);
     if (activeMatchForUser) {
         const chId = activeMatchForUser.matchChannelId || activeMatchForUser.threadId;
         return interaction.reply({ 
