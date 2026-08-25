@@ -30,7 +30,16 @@ const {
     ChannelType
 } = require('discord.js');
 const sqlite3 = require('sqlite3').verbose();
-const { createCanvas, loadImage } = require('@napi-rs/canvas');
+let createCanvas, loadImage;
+let hasCanvas = false;
+try {
+    const canvasModule = require('@napi-rs/canvas');
+    createCanvas = canvasModule.createCanvas;
+    loadImage = canvasModule.loadImage;
+    hasCanvas = true;
+} catch (err) {
+    console.warn('⚠️ @napi-rs/canvas is not installed or failed to load. The bot will use Embeds as fallback for profile cards. Error:', err.message);
+}
 require('dotenv').config();
 
 const client = new Client({
@@ -303,6 +312,9 @@ function updateMatchStats(guildId, winners, losers, mvpWinnerId, mvpLoserId, hos
 
 // دالة توليد بطاقة الكانفاس للبروفايل !p
 async function generateProfileCard(user, member, stats) {
+    if (!hasCanvas || !createCanvas || !loadImage) {
+        return null;
+    }
     const width = 740;
     const height = 330;
     const canvas = createCanvas(width, height);
@@ -615,8 +627,31 @@ client.on('messageCreate', async message => {
         try {
             const stats = await getUserStats(userId, guildId);
             const buffer = await generateProfileCard(message.author, message.member, stats);
-            const attachment = new AttachmentBuilder(buffer, { name: 'profile.png' });
-            return message.reply({ files: [attachment] });
+            if (buffer) {
+                const attachment = new AttachmentBuilder(buffer, { name: 'profile.png' });
+                return message.reply({ files: [attachment] });
+            } else {
+                const totalMatches = stats.matches || (stats.wins + stats.losses);
+                const winrate = totalMatches > 0 ? Math.round((stats.wins / totalMatches) * 100) : 0;
+                const profileEmbed = new EmbedBuilder()
+                    .setColor('#2b2d31')
+                    .setTitle(`📊 بروفايل اللاعب | ${message.author.username}`)
+                    .setThumbnail(message.author.displayAvatarURL({ extension: 'png', size: 256 }))
+                    .addFields(
+                        { name: '🏆 النقاط (Points)', value: `**${stats.points || 0}**`, inline: true },
+                        { name: '⚔️ الانتصارات (Wins)', value: `**${stats.wins || 0}**`, inline: true },
+                        { name: '💀 الهزائم (Losses)', value: `**${stats.losses || 0}**`, inline: true },
+                        { name: '🎖️ MVP', value: `**${stats.mvps || 0}**`, inline: true },
+                        { name: '🎮 المباريات', value: `**${totalMatches || 0}**`, inline: true },
+                        { name: '📈 نسبة الفوز', value: `**${winrate}%**`, inline: true },
+                        { name: '📋 تنظيم', value: `**${stats.organize || 0}**`, inline: true },
+                        { name: '⭐ المستوى (Level)', value: `**${stats.level || 1}**`, inline: true },
+                        { name: '💬 الرسائل', value: `**${stats.messages || 0}**`, inline: true }
+                    )
+                    .setFooter({ text: 'Apostado Manager', iconURL: message.guild.iconURL() })
+                    .setTimestamp();
+                return message.reply({ embeds: [profileEmbed] });
+            }
         } catch (err) {
             console.error(err);
             return message.reply('❌ حدث خطأ أثناء إنشاء بطاقة البروفايل.');
