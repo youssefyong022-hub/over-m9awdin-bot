@@ -1724,30 +1724,39 @@ client.on('interactionCreate', async interaction => {
                     });
                 } catch (e) {}
 
-                // التحقق من اكتمال الأصوات
+                // التحقق من اكتمال الأصوات (إلغاء تخطي الأدمن لكي يصوت الجميع بشكل طبيعي)
                 let reqVotes = 2;
                 if (match.teamSize >= 4) reqVotes = 4;
                 else if (match.teamSize >= 3) reqVotes = 3;
                 else reqVotes = 2;
 
                 const totalVoted = match.winnerVotes.size;
-                if (totalVoted >= reqVotes || totalVoted >= allPlayers.length || isAdmin) {
-                    if (match.winnerVotingConcluded) return;
-                    match.winnerVotingConcluded = true;
-
-                    // تحديد اللاعب الأكثر أصواتاً
+                if (totalVoted >= reqVotes) {
+                    // تحديد اللاعب الأكثر أصواتاً وفحص التعادل
                     const candidateCounts = {};
                     for (const v of match.winnerVotes.values()) {
                         candidateCounts[v.candidateId] = (candidateCounts[v.candidateId] || 0) + 1;
                     }
                     let topCandidate = candidateId;
                     let maxVotes = 0;
+                    let isTie = false;
                     for (const [cId, count] of Object.entries(candidateCounts)) {
                         if (count > maxVotes) {
                             maxVotes = count;
                             topCandidate = cId;
+                            isTie = false;
+                        } else if (count === maxVotes) {
+                            isTie = true;
                         }
                     }
+
+                    // إذا كان هناك تعادل (مثلاً 1-1) ولم يصوت جميع اللاعبين بعد، ننتظر باقي الأصوات
+                    if (isTie && totalVoted < allPlayers.length) {
+                        return;
+                    }
+
+                    if (match.winnerVotingConcluded) return;
+                    match.winnerVotingConcluded = true;
 
                     match.winningMvpUid = topCandidate;
                     match.winningTeam = match.team1.includes(topCandidate) ? 1 : 2;
@@ -1820,22 +1829,31 @@ client.on('interactionCreate', async interaction => {
                 else reqVotes = 2;
 
                 const totalVoted = match.loserVotes.size;
-                if (totalVoted >= reqVotes || totalVoted >= allPlayers.length || isAdmin) {
-                    if (match.votingCompleted) return;
-                    match.votingCompleted = true;
-
+                if (totalVoted >= reqVotes) {
                     const loserCounts = {};
                     for (const candId of match.loserVotes.values()) {
                         loserCounts[candId] = (loserCounts[candId] || 0) + 1;
                     }
                     let topLoser = candidateId;
                     let maxLoserVotes = 0;
+                    let isTieLoser = false;
                     for (const [cId, count] of Object.entries(loserCounts)) {
                         if (count > maxLoserVotes) {
                             maxLoserVotes = count;
                             topLoser = cId;
+                            isTieLoser = false;
+                        } else if (count === maxLoserVotes) {
+                            isTieLoser = true;
                         }
                     }
+
+                    if (isTieLoser && totalVoted < allPlayers.length) {
+                        return;
+                    }
+
+                    if (match.votingCompleted) return;
+                    match.votingCompleted = true;
+
                     match.losingMvpUid = topLoser;
                     saveMatchToDb(match);
 
