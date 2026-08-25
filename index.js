@@ -212,7 +212,7 @@ client.on('interactionCreate', async interaction => {
             await interaction.reply({ content: rulesText }).catch(() => { });
         }
 
-        // --- إضافة أمر give role ---
+        // --- أمر إعطاء الرتبة (Giverole بتصميم مطابق للصورة) ---
         if (commandName === 'giverole') {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
                 return interaction.reply({ content: '❌ ليس لديك صلاحية لإدارة الرتب يا أسطى!', ephemeral: true });
@@ -225,7 +225,6 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو في السيرفر!', ephemeral: true });
             }
 
-            // التحقق من صلاحيات البوت مقارنة بالرتبة المراد إعطاؤها
             if (interaction.guild.members.me.roles.highest.position <= targetRole.position) {
                 return interaction.reply({ content: '❌ رتبة البوت أدنى أو مساوية لهذه الرتبة، لا يمكنني إعطاؤها!', ephemeral: true });
             }
@@ -234,11 +233,12 @@ client.on('interactionCreate', async interaction => {
                 await targetMember.roles.add(targetRole);
 
                 const embed = new EmbedBuilder()
-                    .setColor(0x00ff00)
+                    .setColor(0x00FF00) // لون أخضر تماماً كالذي في الصورة
                     .setTitle('⚡ ROLE ASSIGNED SUCCESSFULLY ⚡')
-                    .setDescription(`تم إعطاء الرتبة بنجاح وعليها ختم الجودة يا أسطى!`)
+                    .setDescription('تم إعطاء الرتبة بنجاح وعليها ختم الجودة يا أسطى!')
+                    .setThumbnail(targetMember.user.displayAvatarURL({ dynamic: true, size: 512 }))
                     .addFields(
-                        { name: '👤 Target Member', value: `${targetMember} (\`${targetMember.user.tag}\`)`, inline: false },
+                        { name: '👤 Target Member', value: `${targetMember} (\`${targetMember.user.username}\`)`, inline: false },
                         { name: '🛡️ Granted Role', value: `${targetRole}`, inline: true },
                         { name: '👑 Managed By', value: `${interaction.user}`, inline: true }
                     )
@@ -252,7 +252,7 @@ client.on('interactionCreate', async interaction => {
             }
         }
 
-        // --- إضافة أمر remove role ---
+        // --- أمر سحب الرتبة (Removerole بتصميم مطابق للصورة) ---
         if (commandName === 'removerole') {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageRoles)) {
                 return interaction.reply({ content: '❌ ليس لديك صلاحية لإدارة الرتب يا أسطى!', ephemeral: true });
@@ -273,11 +273,12 @@ client.on('interactionCreate', async interaction => {
                 await targetMember.roles.remove(targetRole);
 
                 const embed = new EmbedBuilder()
-                    .setColor(0xff0000)
+                    .setColor(0xFF0000) // لون أحمر تماماً كالذي في الصورة
                     .setTitle('⚠️ ROLE REMOVED SUCCESSFULLY ⚠️')
-                    .setDescription(`تم سحب الرتبة بنجاح يا أسطى!`)
+                    .setDescription('تم سحب الرتبة بنجاح يا أسطى!')
+                    .setThumbnail(targetMember.user.displayAvatarURL({ dynamic: true, size: 512 }))
                     .addFields(
-                        { name: '👤 Target Member', value: `${targetMember} (\`${targetMember.user.tag}\`)`, inline: false },
+                        { name: '👤 Target Member', value: `${targetMember} (\`${targetMember.user.username}\`)`, inline: false },
                         { name: '🛡️ Removed Role', value: `${targetRole}`, inline: true },
                         { name: '👑 Managed By', value: `${interaction.user}`, inline: true }
                     )
@@ -543,7 +544,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.update({ content: `✅ تم اختيار اللاعب بنجاح. اختر المنصة الآن واضغط Send Check.` }).catch(() => { });
     }
 
-    else if (interaction.isStringSelectMenu() && interaction.customId === 'select_susProperty_platform' || interaction.customId === 'select_suspect_platform') {
+    else if (interaction.isStringSelectMenu() && interaction.customId === 'select_suspect_platform') {
         let session = activeCheckSessions.get(interaction.user.id) || { suspectId: null, platform: null };
         session.platform = interaction.values[0];
         activeCheckSessions.set(interaction.user.id, session);
