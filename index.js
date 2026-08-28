@@ -228,29 +228,12 @@ function loadMatchesFromDb() {
     });
 }
 
-// دالة فحص وجود مباراة حقيقية غير محذوفة للاعب مع تنظيف تلقائي للرومات المحذوفة
+// دالة فحص وجود مباراة حقيقية للاعب
 function getRealActiveMatchForUser(guild, userId, excludeMatchId = null) {
     if (!guild) return null;
     for (const m of activeMatches.values()) {
         if (m.guildId === guild.id && (!excludeMatchId || m.id !== excludeMatchId) && (m.team1.includes(userId) || m.team2.includes(userId)) && !m.votingCompleted) {
-            const chId = m.matchChannelId || m.threadId;
-            if (m.state === 'LOBBY' || m.state === 'WAITING_INFO') {
-                const lobbyChannel = guild.channels.cache.get(m.channelId);
-                if (lobbyChannel) return m;
-                else {
-                    activeMatches.delete(m.id);
-                    removeMatchFromDb(m.id);
-                }
-            } else {
-                const matchChannel = guild.channels.cache.get(chId);
-                if (matchChannel) {
-                    return m;
-                } else {
-                    // الروم تم حذفه يدوياً! نقوم بمسح الماتش تلقائياً وفك القفل عن اللاعبين فوراً
-                    activeMatches.delete(m.id);
-                    removeMatchFromDb(m.id);
-                }
-            }
+            return m;
         }
     }
     return null;
@@ -308,6 +291,111 @@ function updateMatchStats(guildId, winners, losers, mvpWinnerId, mvpLoserId, hos
         }
         resolve();
     });
+}
+
+// تنظيف صلاحيات الفويس وإعادة إغلاق الرومات للاعبين
+async function cleanupMatchVoicePermissions(guild, match) {
+    if (!guild || !match) return;
+    try {
+        if (match.team1VoiceId) {
+            const v1 = guild.channels.cache.get(match.team1VoiceId) || await guild.channels.fetch(match.team1VoiceId).catch(() => null);
+            if (v1 && v1.permissionOverwrites) {
+                for (const uid of (match.team1 || [])) {
+                    await v1.permissionOverwrites.delete(uid).catch(() => {});
+                }
+            }
+        }
+        if (match.team2VoiceId) {
+            const v2 = guild.channels.cache.get(match.team2VoiceId) || await guild.channels.fetch(match.team2VoiceId).catch(() => null);
+            if (v2 && v2.permissionOverwrites) {
+                for (const uid of (match.team2 || [])) {
+                    await v2.permissionOverwrites.delete(uid).catch(() => {});
+                }
+            }
+        }
+    } catch (e) {
+        console.error('Error cleaning up match voice permissions:', e);
+    }
+}
+
+// دالة إنهاء المباراة وتوزيع النقاط وإغلاق الروم
+async function finalizeMatch(guild, match, channel = null) {
+    if (!guild || !match || match.finalized) return;
+    match.finalized = true;
+    match.votingCompleted = true;
+
+    const winningPlayers = match.winningTeam === 1 ? match.team1 : match.team2;
+    const losingPlayers = match.winningTeam === 1 ? match.team2 : match.team1;
+    const winningTeamName = match.winningTeam === 1 ? 'Team 1' : 'Team 2';
+    const losingTeamName = match.winningTeam === 1 ? 'Team 2' : 'Team 1';
+
+    await updateMatchStats(guild.id, winningPlayers, losingPlayers, match.winningMvpUid, match.losingMvpUid, match.hostId);
+
+    const gameOverEmbed = new EmbedBuilder()
+        .setColor('#2b2d31')
+        .setTitle('🎮 GAME OVER - All MVPs Selected!')
+        .setDescription(
+            `🏆 **MVP Winners**\n<@${match.winningMvpUid}> (+80 points)\n\n` +
+            `🎯 **MVP Losers**\n<@${match.losingMvpUid}> (+30 points)\n\n` +
+            `✅ **Winners (${winningTeamName})**\n${winningPlayers.map(id => `<@${id}>`).join(' , ')}\nEach player received **+50 Win point!**\n\n` +
+            `❌ **Losers (${losingTeamName})**\n${losingPlayers.map(id => `<@${id}>`).join(' , ')}\nEach player received **-30 Lose point.**\n\n` +
+            `*Moving players back to original channels...*`
+        )
+        .setFooter({ text: 'Apostado Manager' })
+        .setTimestamp();
+
+    const targetChannel = channel || guild.channels.cache.get(match.matchChannelId || match.threadId);
+    if (targetChannel) {
+        await targetChannel.send({ embeds: [gameOverEmbed] }).catch(() => {});
+    }
+
+    // إعادة اللاعبين للغرف الصوتية
+    await returnPlayersToWaiting(guild, match);
+
+    // سحب صلاحيات الفويس من اللاعبين لإغلاقه مجدداً
+    await cleanupMatchVoicePermissions(guild, match);
+
+    activeMatches.delete(match.id);
+    removeMatchFromDb(match.id);
+
+    // إغلاق وحذف الروم / الـ Thread بعد 15 ثانية
+    if (targetChannel) {
+        setTimeout(async () => {
+            try {
+                await targetChannel.delete('Match finished and concluded.');
+            } catch (e) {}
+        }, 15000);
+    }
+}
+
+// دالة مساعدة ذكية للعثور على المباراة من التفاعل أو الروم لتجنب أي أخطاء
+function findMatchFromInteraction(interaction, prefix = null) {
+    if (!interaction) return null;
+    let matchId = null;
+    if (prefix && interaction.customId?.startsWith(prefix)) {
+        matchId = interaction.customId.replace(prefix, '');
+        if (prefix.startsWith('modal_join_key_')) {
+            matchId = matchId.replace(/_[12]$/, '');
+        }
+    }
+    let match = matchId ? activeMatches.get(matchId) : null;
+    if (!match && interaction.customId) {
+        for (const [id, m] of activeMatches.entries()) {
+            if (interaction.customId.includes(id)) {
+                match = m;
+                break;
+            }
+        }
+    }
+    if (!match && interaction.guild) {
+        const chId = interaction.channelId || interaction.channel?.id;
+        if (chId) {
+            match = Array.from(activeMatches.values()).find(m => 
+                m.guildId === interaction.guild.id && (m.matchChannelId === chId || m.threadId === chId || m.channelId === chId)
+            );
+        }
+    }
+    return match;
 }
 
 // دالة توليد بطاقة الكانفاس للبروفايل !p
@@ -474,34 +562,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         }
     }
 
-    // فحص خروج اللاعب من الروم الصوتي أثناء المباراة (Voice Leave Auto-Blacklist - 15 دقيقة)
-    if (oldState.channelId && (!newState.channelId || newState.channelId !== oldState.channelId)) {
-        for (const match of activeMatches.values()) {
-            if (match.guildId === guildId && match.state === 'IN_PROGRESS' && !match.votingCompleted) {
-                const isT1 = match.team1.includes(userId);
-                const isT2 = match.team2.includes(userId);
-                if (isT1 || isT2) {
-                    const matchVoiceId = isT1 ? match.team1VoiceId : match.team2VoiceId;
-                    if (oldState.channelId === matchVoiceId && newState.channelId !== matchVoiceId) {
-                        await setUserBlacklist(userId, guildId, 15, 'الخروج من الروم الصوتي أثناء المباراة');
-                        const matchChannel = (newState.guild || oldState.guild).channels.cache.get(match.matchChannelId || match.threadId);
-                        if (matchChannel) {
-                            const blEmbed = new EmbedBuilder()
-                                .setColor('#ff0033')
-                                .setTitle('🚨 عقوبة تلقائية: Blacklist (15 دقيقة)')
-                                .setDescription(`⚠️ **اللاعب <@${userId}> خرج من الروم الصوتي أثناء المباراة!**\nتم إدراجه تلقائياً في قائمة الحظر من اللعب (**Blacklist**) لمدة **15 دقيقة**.\n⛔ لن يتمكن من إنشاء أو الانضمام لأي مباراة حتى انتهاء العقوبة.`)
-                                .setFooter({ text: 'Apostado Anti-Dodge & Fair Play System' })
-                                .setTimestamp();
-                            matchChannel.send({ embeds: [blEmbed] }).catch(() => {});
-                        }
-                    }
-                }
-            }
-        }
-    }
 });
 
-client.once('clientReady', async () => {
+client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag} (Apostado Manager Active)`);
 
     const commands = [
@@ -788,6 +851,149 @@ client.on('messageCreate', async message => {
         }
 
         return message.reply(`🧹 **تم تنظيف جميع المباريات المعلقة (${count}) وفك التعليق عن جميع اللاعبين في السيرفر بنجاح!**`);
+    }
+
+    // أمر تعيين MVP Winner للإدارة !w
+    if (content.toLowerCase().startsWith('!w ') || content.toLowerCase() === '!w') {
+        const isAdmin = message.member.permissions.has(PermissionFlagsBits.ManageGuild) || 
+                        message.member.permissions.has(PermissionFlagsBits.Administrator) ||
+                        message.member.roles.cache.some(r => r.name.toLowerCase().includes('staff') || r.name.toLowerCase().includes('admin'));
+        
+        if (!isAdmin) {
+            return message.reply('❌ هذا الأمر مخصص لطاقم الإدارة فقط!');
+        }
+
+        const parts = content.trim().split(/\s+/);
+        const targetUser = message.mentions.users.first() || (parts[1] ? await client.users.fetch(parts[1]).catch(() => null) : null);
+        if (!targetUser) {
+            return message.reply('ℹ️ **الاستخدام:** `!w @user` لتحديد MVP الفائز للفريق الفائز.');
+        }
+
+        // البحث عن الماتش في القناة الحالية أو باللاعب
+        let match = Array.from(activeMatches.values()).find(m => 
+            m.guildId === guildId && (m.matchChannelId === message.channel.id || m.threadId === message.channel.id)
+        );
+
+        if (!match) {
+            match = Array.from(activeMatches.values()).find(m => 
+                m.guildId === guildId && (m.team1.includes(targetUser.id) || m.team2.includes(targetUser.id))
+            );
+        }
+
+        if (!match) {
+            return message.reply('❌ لم يتم العثور على مباراة نشطة لهذا اللاعب أو في هذه القناة.');
+        }
+
+        const isT1 = match.team1.includes(targetUser.id);
+        const isT2 = match.team2.includes(targetUser.id);
+
+        if (!isT1 && !isT2) {
+            return message.reply(`❌ اللاعب <@${targetUser.id}> ليس مشاركاً في هذه المباراة (Match ID: \`${match.id}\`).`);
+        }
+
+        match.winningMvpUid = targetUser.id;
+        match.winningTeam = isT1 ? 1 : 2;
+        match.winnerVotingConcluded = true;
+        saveMatchToDb(match);
+
+        const bothSelected = !!match.losingMvpUid;
+
+        const dateStr = new Date().toLocaleString('en-US', {
+            month: 'numeric',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+
+        const winEmbed = new EmbedBuilder()
+            .setColor('#2b2d31')
+            .setTitle('✔ MVP Winner Set')
+            .setDescription(`✅ MVP Winner has been set to <@${targetUser.id}> by staff.\n\n**Match ID:** \`${match.id}\``)
+            .setFooter({ text: dateStr });
+
+        await message.channel.send({ embeds: [winEmbed] });
+
+        if (bothSelected) {
+            await message.channel.send({ content: '🎉 **Both MVPs selected! Finalizing match...**' });
+            await finalizeMatch(message.guild, match, message.channel);
+        }
+        return;
+    }
+
+    // أمر تعيين MVP Loser للإدارة !l
+    if (content.toLowerCase().startsWith('!l ') || content.toLowerCase() === '!l') {
+        const isAdmin = message.member.permissions.has(PermissionFlagsBits.ManageGuild) || 
+                        message.member.permissions.has(PermissionFlagsBits.Administrator) ||
+                        message.member.roles.cache.some(r => r.name.toLowerCase().includes('staff') || r.name.toLowerCase().includes('admin'));
+        
+        if (!isAdmin) {
+            return message.reply('❌ هذا الأمر مخصص لطاقم الإدارة فقط!');
+        }
+
+        const parts = content.trim().split(/\s+/);
+        const targetUser = message.mentions.users.first() || (parts[1] ? await client.users.fetch(parts[1]).catch(() => null) : null);
+        if (!targetUser) {
+            return message.reply('ℹ️ **الاستخدام:** `!l @user` لتحديد MVP الخاسر للفريق الخاسر.');
+        }
+
+        // البحث عن الماتش في القناة الحالية أو باللاعب
+        let match = Array.from(activeMatches.values()).find(m => 
+            m.guildId === guildId && (m.matchChannelId === message.channel.id || m.threadId === message.channel.id)
+        );
+
+        if (!match) {
+            match = Array.from(activeMatches.values()).find(m => 
+                m.guildId === guildId && (m.team1.includes(targetUser.id) || m.team2.includes(targetUser.id))
+            );
+        }
+
+        if (!match) {
+            return message.reply('❌ لم يتم العثور على مباراة نشطة لهذا اللاعب أو في هذه القناة.');
+        }
+
+        const isT1 = match.team1.includes(targetUser.id);
+        const isT2 = match.team2.includes(targetUser.id);
+
+        if (!isT1 && !isT2) {
+            return message.reply(`❌ اللاعب <@${targetUser.id}> ليس مشاركاً في هذه المباراة (Match ID: \`${match.id}\`).`);
+        }
+
+        match.losingMvpUid = targetUser.id;
+        if (!match.winningTeam) {
+            match.winningTeam = isT1 ? 2 : 1;
+        }
+        saveMatchToDb(match);
+
+        const bothSelected = !!match.winningMvpUid;
+
+        const dateStr = new Date().toLocaleString('en-US', {
+            month: 'numeric',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+
+        const loseEmbed = new EmbedBuilder()
+            .setColor('#2b2d31')
+            .setTitle('✔ MVP Loser Set')
+            .setDescription(
+                `✅ MVP Loser has been set to <@${targetUser.id}> by staff.\n\n**Match ID:** \`${match.id}\`` +
+                (bothSelected ? '\n\n🎉 **Both MVPs selected! Finalizing match...**' : '')
+            )
+            .setFooter({ text: dateStr });
+
+        await message.channel.send({ embeds: [loseEmbed] });
+
+        if (bothSelected) {
+            await finalizeMatch(message.guild, match, message.channel);
+        }
+        return;
     }
 
     // أمر إنشاء المباريات !play (فقط 2v2, 3v3, 4v4)
@@ -1222,8 +1428,7 @@ client.on('interactionCreate', async interaction => {
 
             // فتح نموذج إدخال معلومات الروم
             if (customId.startsWith('enter_room_info_')) {
-                const matchId = customId.split('_')[3];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'enter_room_info_');
 
                 if (!match) {
                     return interaction.reply({ content: '❌ هذه المباراة لم تعد متوفرة.', ephemeral: true });
@@ -1234,7 +1439,7 @@ client.on('interactionCreate', async interaction => {
                 }
 
                 const modal = new ModalBuilder()
-                    .setCustomId(`modal_room_info_${matchId}`)
+                    .setCustomId(`modal_room_info_${match.id}`)
                     .setTitle('👾 Enter Room Information');
 
                 const roomIdInput = new TextInputBuilder()
@@ -1270,8 +1475,7 @@ client.on('interactionCreate', async interaction => {
             // الانضمام للفريق 1 أو الفريق 2
             if (customId.startsWith('join_team1_') || customId.startsWith('join_team2_')) {
                 const isTeam1 = customId.startsWith('join_team1_');
-                const matchId = customId.split('_')[2];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, isTeam1 ? 'join_team1_' : 'join_team2_');
 
                 if (!match || match.state !== 'LOBBY') {
                     return interaction.reply({ content: '❌ هذه المباراة لم تعد متاحة للانضمام.', ephemeral: true });
@@ -1289,7 +1493,7 @@ client.on('interactionCreate', async interaction => {
                 // التحقق من المفتاح الخاص إن وجد
                 if (match.privateKey && interaction.user.id !== match.hostId) {
                     const keyModal = new ModalBuilder()
-                        .setCustomId(`modal_join_key_${matchId}_${isTeam1 ? '1' : '2'}`)
+                        .setCustomId(`modal_join_key_${match.id}_${isTeam1 ? '1' : '2'}`)
                         .setTitle('🔑 Private Match Key');
 
                     const keyInput = new TextInputBuilder()
@@ -1308,8 +1512,7 @@ client.on('interactionCreate', async interaction => {
 
             // مغادرة الفريق
             if (customId.startsWith('leave_match_')) {
-                const matchId = customId.split('_')[2];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'leave_match_');
 
                 if (!match || match.state !== 'LOBBY') {
                     return interaction.reply({ content: '❌ هذه المباراة لم تعد نشطة.', ephemeral: true });
@@ -1325,8 +1528,7 @@ client.on('interactionCreate', async interaction => {
 
             // إلغاء المباراة من قبل الهوست
             if (customId.startsWith('cancel_match_')) {
-                const matchId = customId.split('_')[2];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'cancel_match_');
 
                 if (!match) {
                     return interaction.reply({ content: '❌ هذه المباراة غير موجودة.', ephemeral: true });
@@ -1340,7 +1542,8 @@ client.on('interactionCreate', async interaction => {
                 }
 
                 if (match.lobbyTimeout) clearTimeout(match.lobbyTimeout);
-                activeMatches.delete(matchId);
+                activeMatches.delete(match.id);
+                removeMatchFromDb(match.id);
 
                 const cancelEmbed = new EmbedBuilder()
                     .setColor(0xED4245)
@@ -1356,8 +1559,7 @@ client.on('interactionCreate', async interaction => {
 
             // نسخ معلومات الروم
             if (customId.startsWith('copy_room_info_')) {
-                const matchId = customId.split('_')[3];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'copy_room_info_');
                 if (!match) {
                     return interaction.reply({ content: '❌ معلومات الروم غير متوفرة حالياً (المباراة غير نشطة).', ephemeral: true });
                 }
@@ -1508,8 +1710,7 @@ client.on('interactionCreate', async interaction => {
 
             // استلام معلومات الروم من الهوست
             if (customId.startsWith('modal_room_info_')) {
-                const matchId = customId.split('_')[3];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'modal_room_info_');
 
                 if (!match) {
                     return interaction.reply({ content: '❌ هذه المباراة غير موجودة.', ephemeral: true });
@@ -1559,10 +1760,12 @@ client.on('interactionCreate', async interaction => {
                 match.lobbyMessageId = lobbyMsg.id;
 
                 // مؤقت دقيقتين لملء الفرق (2 Minutes Timeout)
+                const matchId = match.id;
                 match.lobbyTimeout = setTimeout(async () => {
                     const currentMatch = activeMatches.get(matchId);
                     if (currentMatch && currentMatch.state === 'LOBBY') {
                         activeMatches.delete(matchId);
+                        removeMatchFromDb(matchId);
 
                         const timeoutEmbed = new EmbedBuilder()
                             .setColor(0xED4245)
@@ -1581,10 +1784,8 @@ client.on('interactionCreate', async interaction => {
 
             // التحقق من البرايفت كي عند الانضمام
             if (customId.startsWith('modal_join_key_')) {
-                const parts = customId.split('_');
-                const matchId = parts[3];
-                const teamNum = parseInt(parts[4]);
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'modal_join_key_');
+                const teamNum = customId.endsWith('_2') ? 2 : 1;
 
                 if (!match || match.state !== 'LOBBY') {
                     return interaction.reply({ content: '❌ الماتش لم يعد متاحاً.', ephemeral: true });
@@ -1607,12 +1808,11 @@ client.on('interactionCreate', async interaction => {
             if (customId.startsWith('match_action_select_')) {
                 await interaction.deferReply({ ephemeral: true });
 
-                const matchId = customId.split('_')[3];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'match_action_select_');
                 const selectedAction = values[0];
 
                 if (!match) {
-                    const isMatchChannel = interaction.channel?.name?.startsWith('match-');
+                    const isMatchChannel = interaction.channel?.name?.toLowerCase().includes('match') || interaction.channel?.isThread?.();
                     const rows = [];
                     if (isMatchChannel) {
                         rows.push(new ActionRowBuilder().addComponents(
@@ -1698,10 +1898,11 @@ client.on('interactionCreate', async interaction => {
                     if (!isAdmin) {
                         return interaction.editReply({ content: '❌ هذا الإجراء مخصص لطاقم الإدارة فقط!' });
                     }
-                    activeMatches.delete(matchId);
-                    removeMatchFromDb(matchId);
+                    activeMatches.delete(match.id);
+                    removeMatchFromDb(match.id);
                     await interaction.channel.send({ content: `🛑 **تم إلغاء المباراة رسمياً وإغلاق الروم بواسطة الإدارة:** ${interaction.user}\n🔒 سيتم إعادة اللاعبين وحذف الغرفة المؤقتة خلال 5 ثوانٍ...` });
                     await returnPlayersToWaiting(interaction.guild, match);
+                    await cleanupMatchVoicePermissions(interaction.guild, match);
                     setTimeout(async () => {
                         try { await interaction.channel.delete(); } catch (e) {}
                     }, 5000);
@@ -1716,8 +1917,8 @@ client.on('interactionCreate', async interaction => {
                 // 7. إلغاء المباراة Cancel Match
                 if (selectedAction === 'cancel_match_request') {
                     const cancelConfirmRow = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId(`confirm_cancel_match_${matchId}`).setLabel('Confirm Cancel').setStyle(ButtonStyle.Danger),
-                        new ButtonBuilder().setCustomId(`keep_match_${matchId}`).setLabel('Keep Match').setStyle(ButtonStyle.Secondary)
+                        new ButtonBuilder().setCustomId(`confirm_cancel_match_${match.id}`).setLabel('Confirm Cancel').setStyle(ButtonStyle.Danger),
+                        new ButtonBuilder().setCustomId(`keep_match_${match.id}`).setLabel('Keep Match').setStyle(ButtonStyle.Secondary)
                     );
                     await interaction.channel.send({
                         content: `⚠️ **طلب إلغاء المباراة:** بدأ ${interaction.user} طلباً لإلغاء المباراة. هل تؤكد الإلغاء؟`,
@@ -1729,8 +1930,7 @@ client.on('interactionCreate', async interaction => {
 
             // استقبال صوت الفائز والـ MVP (المرحلة 1)
             if (customId.startsWith('vote_winner_mvp_select_')) {
-                const matchId = customId.split('_')[4];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'vote_winner_mvp_select_');
                 if (!match) return interaction.reply({ content: '❌ المباراة غير نشطة.', ephemeral: true });
 
                 const voterId = interaction.user.id;
@@ -1827,8 +2027,7 @@ client.on('interactionCreate', async interaction => {
 
             // استقبال صوت MVP الخاسر (المرحلة 2)
             if (customId.startsWith('vote_loser_mvp_select_')) {
-                const matchId = customId.split('_')[4];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'vote_loser_mvp_select_');
                 if (!match) return interaction.reply({ content: '❌ المباراة غير نشطة.', ephemeral: true });
 
                 const voterId = interaction.user.id;
@@ -1915,55 +2114,22 @@ client.on('interactionCreate', async interaction => {
                     content: `🔴 **MVP Losers Selected!**\n\n<@${match.losingMvpUid}> has been voted as MVP Losers.\nMVP points will be awarded after **both** MVPs are selected.`
                 });
 
-                // 3. إرسال GAME OVER EMBED النهائي وتوزيع النقاط
-                const winningPlayers = match.winningTeam === 1 ? match.team1 : match.team2;
-                const losingPlayers = match.winningTeam === 1 ? match.team2 : match.team1;
-                const winningTeamName = match.winningTeam === 1 ? 'Team 1' : 'Team 2';
-                const losingTeamName = match.winningTeam === 1 ? 'Team 2' : 'Team 1';
-
-                await updateMatchStats(interaction.guild.id, winningPlayers, losingPlayers, match.winningMvpUid, match.losingMvpUid, match.hostId);
-
-                const gameOverEmbed = new EmbedBuilder()
-                    .setColor('#2b2d31')
-                    .setTitle('🎮 GAME OVER - All MVPs Selected!')
-                    .setDescription(
-                        `🏆 **MVP Winners**\n<@${match.winningMvpUid}> (+80 points)\n\n` +
-                        `🎯 **MVP Losers**\n<@${match.losingMvpUid}> (+30 points)\n\n` +
-                        `✅ **Winners (${winningTeamName})**\n${winningPlayers.map(id => `<@${id}>`).join(' , ')}\nEach player received **+50 Win point!**\n\n` +
-                        `❌ **Losers (${losingTeamName})**\n${losingPlayers.map(id => `<@${id}>`).join(' , ')}\nEach player received **-30 Lose point.**\n\n` +
-                        `*Moving players back to original channels...*`
-                    )
-                    .setFooter({ text: 'Apostado Manager' })
-                    .setTimestamp();
-
-                await interaction.channel.send({ embeds: [gameOverEmbed] });
-
-                // إعادة اللاعبين للغرف الصوتية
-                await returnPlayersToWaiting(interaction.guild, match);
-
-                activeMatches.delete(match.id);
-                removeMatchFromDb(match.id);
-
-                // إغلاق وحذف الروم / الـ Thread بعد 15 ثانية
-                setTimeout(async () => {
-                    try {
-                        await interaction.channel.delete('Match finished and concluded.');
-                    } catch (e) {}
-                }, 15000);
+                // إنهاء الماتش وتوزيع النقاط عبر دالة finalizeMatch
+                await finalizeMatch(interaction.guild, match, interaction.channel);
                 return;
             }
 
             // تأكيد إلغاء المباراة
             if (customId.startsWith('confirm_cancel_match_')) {
-                const matchId = customId.split('_')[3];
-                const match = activeMatches.get(matchId);
+                const match = findMatchFromInteraction(interaction, 'confirm_cancel_match_');
                 if (!match) return interaction.reply({ content: '❌ المباراة غير نشطة.', ephemeral: true });
 
-                activeMatches.delete(matchId);
-                removeMatchFromDb(matchId);
+                activeMatches.delete(match.id);
+                removeMatchFromDb(match.id);
 
                 await interaction.reply({ content: `🛑 **تم إلغاء المباراة رسمياً بناءً على طلب اللاعبين.**\n🔒 سيتم إعادة الجميع وحذف الروم خلال 5 ثوانٍ...` });
                 await returnPlayersToWaiting(interaction.guild, match);
+                await cleanupMatchVoicePermissions(interaction.guild, match);
                 setTimeout(async () => {
                     try { await interaction.channel.delete(); } catch (e) {}
                 }, 5000);
@@ -2257,6 +2423,27 @@ async function startMatch(guild, match) {
 
         match.team1VoiceId = selectedT1Voice?.id;
         match.team2VoiceId = selectedT2Voice?.id;
+
+        // منح صلاحيات الفويس للاعبي Team 1 و Team 2 لتبقى مفتوحة لهم طوال الماتش حتى لو خرجوا
+        if (selectedT1Voice) {
+            for (const uid of match.team1) {
+                await selectedT1Voice.permissionOverwrites.edit(uid, {
+                    Connect: true,
+                    ViewChannel: true,
+                    Speak: true
+                }).catch(() => {});
+            }
+        }
+
+        if (selectedT2Voice) {
+            for (const uid of match.team2) {
+                await selectedT2Voice.permissionOverwrites.edit(uid, {
+                    Connect: true,
+                    ViewChannel: true,
+                    Speak: true
+                }).catch(() => {});
+            }
+        }
 
         // نقل لاعبي Team 1
         for (const uid of match.team1) {
