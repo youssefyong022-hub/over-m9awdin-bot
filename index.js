@@ -826,7 +826,12 @@ client.once('ready', async () => {
         new SlashCommandBuilder()
             .setName('clearmatches')
             .setDescription('تنظيف وإعادة ضبط جميع المباريات المعلقة وفك القفل عن جميع اللاعبين')
-            .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+            .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+        new SlashCommandBuilder()
+            .setName('move')
+            .setDescription('سحب عضو إلى الروم الصوتي الحالي الخاص بك')
+            .setDefaultMemberPermissions(PermissionFlagsBits.MoveMembers)
+            .addUserOption(opt => opt.setName('member').setDescription('العضو المراد سحبه').setRequired(true))
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -914,6 +919,97 @@ client.on('messageCreate', async message => {
             return message.reply({ embeds: [topEmbed] });
         });
         return;
+    }
+
+    // أمر النقل الصوتي &move أو !move
+    if (content.toLowerCase().startsWith('&move') || content.toLowerCase().startsWith('!move')) {
+        const hasPermission = message.member.permissions.has(PermissionFlagsBits.MoveMembers) || 
+                              message.member.permissions.has(PermissionFlagsBits.ManageGuild) || 
+                              message.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                              message.member.roles.cache.some(r => {
+                                  const name = r.name.toLowerCase();
+                                  return name.includes('staff') || name.includes('admin') || name.includes('moderator') || name.includes('mod') || name.includes('apos');
+                              });
+
+        if (!hasPermission) {
+            const noPermEmbed = new EmbedBuilder()
+                .setColor('#ed4245')
+                .setDescription('❌ You do not have permission');
+            return message.reply({ embeds: [noPermEmbed] });
+        }
+
+        const authorVoiceChannel = message.member.voice.channel;
+        if (!authorVoiceChannel) {
+            const noVoiceEmbed = new EmbedBuilder()
+                .setColor('#ed4245')
+                .setDescription('❌ You must be in a voice channel to move members.');
+            return message.reply({ embeds: [noVoiceEmbed] });
+        }
+
+        const parts = content.trim().split(/\s+/);
+        const targetRaw = parts[1];
+
+        if (!targetRaw) {
+            const usageEmbed = new EmbedBuilder()
+                .setColor('#ed4245')
+                .setDescription('❌ Please specify a user to move: `&move <@user / ID>`');
+            return message.reply({ embeds: [usageEmbed] });
+        }
+
+        let targetMember = message.mentions.members.first();
+        if (!targetMember) {
+            const cleanId = targetRaw.replace(/[<@!>]/g, '');
+            if (/^\d{17,20}$/.test(cleanId)) {
+                targetMember = await message.guild.members.fetch(cleanId).catch(() => null);
+            } else {
+                targetMember = message.guild.members.cache.find(m => 
+                    m.user.username.toLowerCase() === targetRaw.toLowerCase() || 
+                    m.displayName.toLowerCase() === targetRaw.toLowerCase() ||
+                    m.user.tag.toLowerCase() === targetRaw.toLowerCase()
+                );
+                if (!targetMember) {
+                    try {
+                        const searched = await message.guild.members.search({ query: targetRaw, limit: 1 });
+                        if (searched && searched.size > 0) targetMember = searched.first();
+                    } catch (e) {}
+                }
+            }
+        }
+
+        if (!targetMember) {
+            const notFoundEmbed = new EmbedBuilder()
+                .setColor('#ed4245')
+                .setDescription('❌ Member not found in this server.');
+            return message.reply({ embeds: [notFoundEmbed] });
+        }
+
+        if (!targetMember.voice.channel) {
+            const notInVoiceEmbed = new EmbedBuilder()
+                .setColor('#ed4245')
+                .setDescription('❌ The target member is not in any voice channel.');
+            return message.reply({ embeds: [notInVoiceEmbed] });
+        }
+
+        try {
+            await targetMember.voice.setChannel(authorVoiceChannel);
+            const successEmbed = new EmbedBuilder()
+                .setColor('#57f287')
+                .setTitle('✔ • Member moved')
+                .setDescription(
+                    `\n` +
+                    `╰┈➤ User: ${targetMember.displayName}\n` +
+                    `╰┈➤ Channel: ${authorVoiceChannel.name}`
+                )
+                .setFooter({ text: `© ${new Date().getFullYear()} ${message.guild.name}. All Rights Reserved.` });
+
+            return message.reply({ embeds: [successEmbed] });
+        } catch (err) {
+            console.error('Error moving member:', err);
+            const failEmbed = new EmbedBuilder()
+                .setColor('#ed4245')
+                .setDescription('❌ Failed to move member. Please check bot permissions.');
+            return message.reply({ embeds: [failEmbed] });
+        }
     }
 
     // أوامر البلاك ليست النصية للإدارة (!blacklist / !unblacklist / !bl)
@@ -1615,6 +1711,66 @@ client.on('interactionCreate', async interaction => {
                     }
                 }
                 return interaction.reply({ content: `🧹 **تم تنظيف جميع المباريات المعلقة (${count}) وفك التعليق عن جميع لاعبي السيرفر بنجاح!**` });
+            }
+
+            if (commandName === 'move') {
+                const hasPermission = interaction.member.permissions.has(PermissionFlagsBits.MoveMembers) || 
+                                      interaction.member.permissions.has(PermissionFlagsBits.ManageGuild) || 
+                                      interaction.member.permissions.has(PermissionFlagsBits.Administrator) || 
+                                      interaction.member.roles.cache.some(r => {
+                                          const name = r.name.toLowerCase();
+                                          return name.includes('staff') || name.includes('admin') || name.includes('moderator') || name.includes('mod') || name.includes('apos');
+                                      });
+
+                if (!hasPermission) {
+                    const noPermEmbed = new EmbedBuilder()
+                        .setColor('#ed4245')
+                        .setDescription('❌ You do not have permission');
+                    return interaction.reply({ embeds: [noPermEmbed], ephemeral: true });
+                }
+
+                const authorVoiceChannel = interaction.member.voice.channel;
+                if (!authorVoiceChannel) {
+                    const noVoiceEmbed = new EmbedBuilder()
+                        .setColor('#ed4245')
+                        .setDescription('❌ You must be in a voice channel to move members.');
+                    return interaction.reply({ embeds: [noVoiceEmbed], ephemeral: true });
+                }
+
+                const targetMember = interaction.options.getMember('member');
+                if (!targetMember) {
+                    const notFoundEmbed = new EmbedBuilder()
+                        .setColor('#ed4245')
+                        .setDescription('❌ Member not found in this server.');
+                    return interaction.reply({ embeds: [notFoundEmbed], ephemeral: true });
+                }
+
+                if (!targetMember.voice.channel) {
+                    const notInVoiceEmbed = new EmbedBuilder()
+                        .setColor('#ed4245')
+                        .setDescription('❌ The target member is not in any voice channel.');
+                    return interaction.reply({ embeds: [notInVoiceEmbed], ephemeral: true });
+                }
+
+                try {
+                    await targetMember.voice.setChannel(authorVoiceChannel);
+                    const successEmbed = new EmbedBuilder()
+                        .setColor('#57f287')
+                        .setTitle('✔ • Member moved')
+                        .setDescription(
+                            `\n` +
+                            `╰┈➤ User: ${targetMember.displayName}\n` +
+                            `╰┈➤ Channel: ${authorVoiceChannel.name}`
+                        )
+                        .setFooter({ text: `© ${new Date().getFullYear()} ${interaction.guild.name}. All Rights Reserved.` });
+
+                    return interaction.reply({ embeds: [successEmbed] });
+                } catch (err) {
+                    const failEmbed = new EmbedBuilder()
+                        .setColor('#ed4245')
+                        .setDescription('❌ Failed to move member. Please check bot permissions.');
+                    return interaction.reply({ embeds: [failEmbed], ephemeral: true });
+                }
             }
         }
 
