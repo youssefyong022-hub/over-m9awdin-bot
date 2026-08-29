@@ -545,6 +545,58 @@ async function finalizeMatch(guild, match, channel = null) {
     }
 }
 
+// دالة بناء دليل الأوامر الشامل والاحترافي (Official Commands Guide Embed)
+function generateCommandsEmbed(guild) {
+    const embed = new EmbedBuilder()
+        .setColor('#2b2d31')
+        .setAuthor({ 
+            name: `${guild.name} • Official Commands Guide`, 
+            iconURL: guild.iconURL() || client.user.displayAvatarURL() 
+        })
+        .setThumbnail(guild.iconURL() || client.user.displayAvatarURL())
+        .setDescription(
+            `Welcome to **${guild.name}**! Here is the complete list of bot commands and automated matchmaking systems.\n\u200b`
+        )
+        .addFields(
+            {
+                name: '🎮 ┃ PLAYER COMMANDS',
+                value: 
+                    `\` /profile \` or \` !p \` • View player stats, winrate & rank\n` +
+                    `\` /leaderboard \` or \` !top \` • Server Top 10 rankings\n` +
+                    `\` /rank \` • View your level & activity XP\n` +
+                    `\` /rules \` • View matchmaking & tournament rules\n\u200b`,
+                inline: false
+            },
+            {
+                name: '🛡️ ┃ STAFF & MODERATION',
+                value: 
+                    `\` &move <@user/ID> \` • Drag a member into your voice channel\n` +
+                    `\` /blacklist add \` or \` !bl \` • Ban player with auto DM alert\n` +
+                    `\` /blacklist remove \` or \` !unbl \` • Unban player from matches\n` +
+                    `\` /blacklist list \` • View active bans & remaining time\n` +
+                    `\` /unblock <@user> \` • Unlock player from stuck matches\n` +
+                    `\` /clearmatches \` • Clean & reset all stuck match rooms\n` +
+                    `\` !w @user \` • Set Winning Team MVP (+80 pts)\n` +
+                    `\` !l @user \` • Set Losing Team MVP (+30 pts)\n` +
+                    `\` /giverole \` / \` /removerole \` • Manage member roles\n` +
+                    `\` /live <link> \` • Announce stream in channel\n\u200b`,
+                inline: false
+            },
+            {
+                name: '🕹️ ┃ AUTOMATED SYSTEMS',
+                value: 
+                    `🔍 **Player Check** • Report cheaters via \`/checker\` (PC / Phone)\n` +
+                    `📁 **Support Tickets** • Open Help / Abuse tickets via \`/ticket\`\n` +
+                    `👾 **Matchmaking Engine** • Join \`⏳ Waiting\` voice, enter Room ID & play!`,
+                inline: false
+            }
+        )
+        .setFooter({ text: `© ${new Date().getFullYear()} ${guild.name}. All Rights Reserved.` })
+        .setTimestamp();
+
+    return embed;
+}
+
 // دالة مساعدة ذكية للعثور على المباراة من التفاعل أو الروم لتجنب أي أخطاء
 function findMatchFromInteraction(interaction, prefix = null) {
     if (!interaction) return null;
@@ -831,7 +883,15 @@ client.once('ready', async () => {
             .setName('move')
             .setDescription('سحب عضو إلى الروم الصوتي الحالي الخاص بك')
             .setDefaultMemberPermissions(PermissionFlagsBits.MoveMembers)
-            .addUserOption(opt => opt.setName('member').setDescription('العضو المراد سحبه').setRequired(true))
+            .addUserOption(opt => opt.setName('member').setDescription('العضو المراد سحبه').setRequired(true)),
+        new SlashCommandBuilder()
+            .setName('commands')
+            .setDescription('إرسال لوحة دليل الأوامر الرسمي في بطاقة Embed احترافية')
+            .addChannelOption(opt => opt.setName('channel').setDescription('القناة التي ستُرسل فيها البطاقة (اختياري)').setRequired(false)),
+        new SlashCommandBuilder()
+            .setName('help')
+            .setDescription('عرض دليل الأوامر الرسمي الشامل')
+            .addChannelOption(opt => opt.setName('channel').setDescription('القناة التي ستُرسل فيها البطاقة (اختياري)').setRequired(false))
     ].map(command => command.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
@@ -919,6 +979,12 @@ client.on('messageCreate', async message => {
             return message.reply({ embeds: [topEmbed] });
         });
         return;
+    }
+
+    // أمر دليل الأوامر !help أو !commands أو &help
+    if (content.toLowerCase() === '!help' || content.toLowerCase() === '!commands' || content.toLowerCase() === '&help' || content.toLowerCase() === '&commands') {
+        const embed = generateCommandsEmbed(message.guild);
+        return message.reply({ embeds: [embed] });
     }
 
     // أمر النقل الصوتي &move أو !move
@@ -1771,6 +1837,21 @@ client.on('interactionCreate', async interaction => {
                         .setDescription('❌ Failed to move member. Please check bot permissions.');
                     return interaction.reply({ embeds: [failEmbed], ephemeral: true });
                 }
+            }
+
+            if (commandName === 'commands' || commandName === 'help') {
+                const targetChannel = interaction.options.getChannel('channel');
+                const embed = generateCommandsEmbed(interaction.guild);
+
+                if (targetChannel) {
+                    if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+                        return interaction.reply({ content: '❌ يجب أن تمتلك صلاحية إدارة السيرفر لإرسال الدليل في قناة أخرى!', ephemeral: true });
+                    }
+                    await targetChannel.send({ embeds: [embed] });
+                    return interaction.reply({ content: `✅ **تم إرسال بطاقة دليل الأوامر بنجاح إلى القناة:** ${targetChannel}`, ephemeral: true });
+                }
+
+                return interaction.reply({ embeds: [embed] });
             }
         }
 
