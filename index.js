@@ -121,7 +121,8 @@ db.serialize(() => {
         { name: 'losses', type: 'INTEGER DEFAULT 0' },
         { name: 'mvps', type: 'INTEGER DEFAULT 0' },
         { name: 'matches', type: 'INTEGER DEFAULT 0' },
-        { name: 'organize', type: 'INTEGER DEFAULT 0' }
+        { name: 'organize', type: 'INTEGER DEFAULT 0' },
+        { name: 'streak', type: 'INTEGER DEFAULT 0' }
     ];
 
     requiredColumns.forEach(col => {
@@ -197,6 +198,86 @@ function getUserReports(reporterId, guildId) {
     });
 }
 
+async function processCheckSubmission(interaction, targetId, device) {
+    const reporterId = interaction.user.id;
+    const guildId = interaction.guild.id;
+
+    if (targetId === reporterId) {
+        return interaction.reply({ content: '❌ لا يمكنك طلب فحص لنفسك!', ephemeral: true });
+    }
+
+    const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
+    if (!targetMember) {
+        return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو في السيرفر!', ephemeral: true });
+    }
+    if (targetMember.user.bot) {
+        return interaction.reply({ content: '❌ لا يمكنك الإبلاغ عن بوت!', ephemeral: true });
+    }
+
+    const stats = await getUserStats(reporterId, guildId);
+    if ((stats.points || 0) < 50) {
+        return interaction.reply({ 
+            content: `❌ ليس لديك نقاط كافية! رصيدك الحالي هو **${stats.points || 0}** نقطة، وتحتاج إلى **50 نقطة** لطلب الفحص.`, 
+            ephemeral: true 
+        });
+    }
+
+    const reportId = crypto.randomBytes(3).toString('hex');
+
+    // Deduct 50 points
+    db.run(`UPDATE users SET points = points - 50 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+    await createCheckReport(reportId, guildId, reporterId, targetId, device);
+
+    const deviceFormatted = device === 'PC' ? '💻 PC' : '📱 Phone';
+    const submittedEmbed = new EmbedBuilder()
+        .setColor('#2b2d31')
+        .setAuthor({ 
+            name: 'Request Submitted', 
+            iconURL: 'https://cdn-icons-png.flaticon.com/512/5610/5610944.png' 
+        })
+        .setDescription(
+            `### ✅ Check Request Submitted!\n\n` +
+            `**Report ID:** \`${reportId}\`\n` +
+            `**Target:** ${targetMember}\n` +
+            `**Device:** ${deviceFormatted}\n` +
+            `**Cost:** \`-50\` points\n\n` +
+            `Staff will review your report soon.`
+        )
+        .setTimestamp();
+
+    await interaction.reply({ embeds: [submittedEmbed], ephemeral: true });
+
+    const adminChannel = interaction.guild.channels.cache.find(c => 
+        c.name === 'check-services' || c.name === 'check-place-user' || c.name === 'reports' || c.name === 'staff-logs'
+    ) || interaction.channel;
+
+    const adminEmbed = new EmbedBuilder()
+        .setColor('#ffaa00')
+        .setTitle('🚨 Player Check Request 🚨')
+        .setDescription(
+            `**Report ID:** \`${reportId}\`\n` +
+            `**Target:** ${targetMember} (\`${targetId}\`)\n` +
+            `**Device:** ${deviceFormatted}\n` +
+            `**Requested by:** ${interaction.user} (\`${reporterId}\`)\n` +
+            `**Cost:** \`50\` points paid\n` +
+            `**Status:** ⏳ \`Pending Review\``
+        )
+        .setFooter({ text: 'Apostado Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
+        .setTimestamp();
+
+    const adminActionRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`check_clean_${reportId}`).setLabel('Clean').setStyle(ButtonStyle.Success).setEmoji('🟢'),
+        new ButtonBuilder().setCustomId(`check_cheater_${reportId}`).setLabel('Cheater').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
+        new ButtonBuilder().setCustomId(`check_cancel_${reportId}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary).setEmoji('❌')
+    );
+
+    await adminChannel.send({ 
+        content: `📢 **تنبيه إداري جديد:** ${interaction.user} قام بالإبلاغ عن لاعب للفحص!`, 
+        embeds: [adminEmbed], 
+        components: [adminActionRow] 
+    });
+}
+
 // دوال البلاك ليست (Blacklist Database Functions)
 function setUserBlacklist(userId, guildId, durationMinutes, reason = 'مخالفة القوانين') {
     return new Promise((resolve) => {
@@ -249,6 +330,22 @@ function formatRemainingTime(ms) {
     const secs = totalSec % 60;
     if (mins > 0) return `${mins} دقيقة و ${secs} ثانية`;
     return `${secs} ثانية`;
+}
+
+function formatDurationEnglish(minutes) {
+    if (!minutes || minutes <= 0) return 'Permanent';
+    if (minutes >= 1440 && minutes % 1440 === 0) {
+        return `${minutes / 1440} day(s)`;
+    }
+    if (minutes >= 60 && minutes % 60 === 0) {
+        return `${minutes / 60} hour(s)`;
+    }
+    if (minutes >= 60) {
+        const hours = Math.floor(minutes / 60);
+        const mins = minutes % 60;
+        return `${hours} hour(s) ${mins} minute(s)`;
+    }
+    return `${minutes} minute(s)`;
 }
 
 // دوال حفظ واسترجاع المباريات في قاعدة البيانات (Match Persistence)
@@ -1416,10 +1513,28 @@ client.on('interactionCreate', async interaction => {
 
                     await setUserBlacklist(targetUser.id, guildId, minutes, reason);
 
+                    const durationText = formatDurationEnglish(minutes);
+
+                    // Send DM to target user matching Image 1
+                    const blacklistDmEmbed = new EmbedBuilder()
+                        .setColor('#ffffff')
+                        .setTitle('⚠️ You Have Been Blacklisted')
+                        .setDescription(
+                            `**Server:** - ${interaction.guild.name}\n` +
+                            `**Duration:** ${durationText}\n` +
+                            `**Reason:** ${reason}\n\n` +
+                            `You can no longer use the bot in this server.`
+                        )
+                        .setTimestamp();
+
+                    try {
+                        await targetUser.send({ embeds: [blacklistDmEmbed] });
+                    } catch (e) {}
+
                     const blEmbed = new EmbedBuilder()
                         .setColor('#ff0033')
                         .setTitle('⛔ تم إضافة اللاعب إلى البلاك ليست (Blacklist)')
-                        .setDescription(`👤 **اللاعب:** ${targetUser} (\`${targetUser.id}\`)\n⏰ **المدة:** \`${minutes}\` دقيقة\n📝 **السبب:** \`${reason}\`\n👑 **بواسطة:** ${interaction.user}`)
+                        .setDescription(`👤 **اللاعب:** ${targetUser} (\`${targetUser.id}\`)\n⏰ **المدة:** \`${durationText}\` (\`${minutes}\` دقيقة)\n📝 **السبب:** \`${reason}\`\n👑 **بواسطة:** ${interaction.user}`)
                         .setFooter({ text: `${interaction.guild.name} • Blacklist System` })
                         .setTimestamp();
 
@@ -1719,15 +1834,37 @@ client.on('interactionCreate', async interaction => {
                 const device = customId === 'check_select_device_pc' ? 'PC' : 'Phone';
                 const userSelect = new UserSelectMenuBuilder()
                     .setCustomId(`submit_check_target_${device}`)
-                    .setPlaceholder('Select the player to check...')
+                    .setPlaceholder('Type username or pick a member below (no @)...')
                     .setMinValues(1)
                     .setMaxValues(1);
                 const selectRow = new ActionRowBuilder().addComponents(userSelect);
+                const manualButtonRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(`check_enter_modal_${device}`)
+                        .setLabel('Or enter ID / @tag manually')
+                        .setStyle(ButtonStyle.Secondary)
+                        .setEmoji('✏️')
+                );
                 return interaction.update({
-                    content: 'Select the player to check\nUse @tag to pick a member. They must be in this server.',
+                    content: '**Select the player to check**\nType username (without @) or pick a member from the list. They must be in this server.',
                     embeds: [],
-                    components: [selectRow]
+                    components: [selectRow, manualButtonRow]
                 });
+            }
+
+            if (customId === 'check_enter_modal_pc' || customId === 'check_enter_modal_phone') {
+                const device = customId === 'check_enter_modal_pc' ? 'PC' : 'Phone';
+                const modal = new ModalBuilder()
+                    .setCustomId(`modal_check_manual_${device}`)
+                    .setTitle(`Check Player (${device})`);
+                const userInput = new TextInputBuilder()
+                    .setCustomId('user_input')
+                    .setLabel('Username, @tag, or User ID')
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder('e.g. Taraji 1919, @Taraji 1919, or ID')
+                    .setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(userInput));
+                return interaction.showModal(modal);
             }
 
             if (customId === 'view_my_reports') {
@@ -1785,7 +1922,9 @@ client.on('interactionCreate', async interaction => {
 
                 if (action === 'cheater') {
                     await updateReportStatus(reportId, 'cheater', interaction.user.id);
-                    db.run(`UPDATE users SET points = points + 70 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+                    const reporterStats = await getUserStats(reporterId, guildId);
+                    const newStreak = (reporterStats.streak || 0) + 1;
+                    db.run(`UPDATE users SET points = points + 70, streak = ? WHERE userId = ? AND guildId = ?`, [newStreak, reporterId, guildId]);
 
                     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
                         .setColor('#ff0033')
@@ -1800,15 +1939,26 @@ client.on('interactionCreate', async interaction => {
                     try {
                         const reporterUser = await client.users.fetch(reporterId);
                         if (reporterUser) {
-                            await reporterUser.send({
-                                content: `🎉 **Check Report Update!**\nYour report \`${reportId}\` on <@${targetId}> was confirmed as **CHEATER** by staff!\nYou have received your **50 points back + 20 bonus points** (Total: **+70 points** 🤌).`
-                            });
+                            const cheaterDmEmbed = new EmbedBuilder()
+                                .setColor('#ff3333')
+                                .setTitle('🚨 Cheater Confirmed!')
+                                .setDescription(
+                                    `Your check report in **- ${interaction.guild.name}** has been reviewed.\n\n` +
+                                    `**Target:** <@${targetId}>\n` +
+                                    `**Result:** CHEATER FOUND ✅\n` +
+                                    `**Cost Recovered:** +50 points\n` +
+                                    `**Reward:** +20 points\n` +
+                                    `**Streak:** ${newStreak}/5 consecutive cheaters\n` +
+                                    `**Marked by:** ${interaction.user}\n\n` +
+                                    `Thank you for keeping the community clean!`
+                                );
+                            await reporterUser.send({ embeds: [cheaterDmEmbed] });
                         }
                     } catch (e) {}
                     return;
                 } else if (action === 'clean') {
                     await updateReportStatus(reportId, 'clean', interaction.user.id);
-                    db.run(`UPDATE users SET points = points + 20 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+                    db.run(`UPDATE users SET points = points + 20, streak = 0 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
 
                     const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
                         .setColor('#00ff88')
@@ -1823,9 +1973,19 @@ client.on('interactionCreate', async interaction => {
                     try {
                         const reporterUser = await client.users.fetch(reporterId);
                         if (reporterUser) {
-                            await reporterUser.send({
-                                content: `ℹ️ **Check Report Update!**\nYour report \`${reportId}\` on <@${targetId}> was reviewed and marked as **CLEAN** by staff.\nYou lost **30 points** (20 points refunded from the 50 paid).`
-                            });
+                            const cleanDmEmbed = new EmbedBuilder()
+                                .setColor('#00ff88')
+                                .setTitle('🛡️ Clean Confirmed!')
+                                .setDescription(
+                                    `Your check report in **- ${interaction.guild.name}** has been reviewed.\n\n` +
+                                    `**Target:** <@${targetId}>\n` +
+                                    `**Result:** PLAYER IS CLEAN 🟢\n` +
+                                    `**Cost Lost:** -30 points\n` +
+                                    `**Refunded:** +20 points\n` +
+                                    `**Marked by:** ${interaction.user}\n\n` +
+                                    `Thank you for helping keep the community clean!`
+                                );
+                            await reporterUser.send({ embeds: [cleanDmEmbed] });
                         }
                     } catch (e) {}
                     return;
@@ -1846,9 +2006,17 @@ client.on('interactionCreate', async interaction => {
                     try {
                         const reporterUser = await client.users.fetch(reporterId);
                         if (reporterUser) {
-                            await reporterUser.send({
-                                content: `⚠️ **Check Report Cancelled**\nYour report \`${reportId}\` on <@${targetId}> was cancelled by staff. Your **50 points** have been fully refunded.`
-                            });
+                            const cancelDmEmbed = new EmbedBuilder()
+                                .setColor('#888888')
+                                .setTitle('⚠️ Check Report Cancelled')
+                                .setDescription(
+                                    `Your check report in **- ${interaction.guild.name}** has been reviewed.\n\n` +
+                                    `**Target:** <@${targetId}>\n` +
+                                    `**Result:** CANCELLED ❌\n` +
+                                    `**Refunded:** +50 points (Full Refund)\n` +
+                                    `**Marked by:** ${interaction.user}`
+                                );
+                            await reporterUser.send({ embeds: [cancelDmEmbed] });
                         }
                     } catch (e) {}
                     return;
@@ -1859,6 +2027,42 @@ client.on('interactionCreate', async interaction => {
         // --- 3. استقبال نماذج المودال (Modals) ---
         if (interaction.isModalSubmit()) {
             const { customId } = interaction;
+
+            if (customId.startsWith('modal_check_manual_')) {
+                const device = customId.replace('modal_check_manual_', '');
+                const input = interaction.fields.getTextInputValue('user_input').trim();
+                
+                let targetId = null;
+                const mentionMatch = input.match(/^<@!?(\d+)>$/);
+                if (mentionMatch) {
+                    targetId = mentionMatch[1];
+                } else if (/^\d{17,20}$/.test(input)) {
+                    targetId = input;
+                } else {
+                    const cleanName = input.replace(/^@/, '').trim().toLowerCase();
+                    let found = interaction.guild.members.cache.find(m => 
+                        m.user.username.toLowerCase() === cleanName ||
+                        m.displayName.toLowerCase() === cleanName ||
+                        m.user.tag.toLowerCase() === cleanName
+                    );
+                    
+                    if (!found) {
+                        try {
+                            const searched = await interaction.guild.members.search({ query: cleanName, limit: 1 });
+                            if (searched && searched.size > 0) {
+                                found = searched.first();
+                            }
+                        } catch (e) {}
+                    }
+                    if (found) targetId = found.id;
+                }
+
+                if (!targetId) {
+                    return interaction.reply({ content: `❌ لم يتم العثور على اللاعب \`${input}\` في هذا السيرفر! تأكد من كتابة الاسم أو الـ ID بشكل صحيح.`, ephemeral: true });
+                }
+
+                return processCheckSubmission(interaction, targetId, device);
+            }
 
             // استلام معلومات الروم من الهوست
             if (customId.startsWith('modal_room_info_')) {
@@ -2297,85 +2501,7 @@ client.on('interactionCreate', async interaction => {
         if (interaction.isUserSelectMenu() && interaction.customId.startsWith('submit_check_target_')) {
             const device = interaction.customId.replace('submit_check_target_', '');
             const targetId = interaction.values[0];
-            const reporterId = interaction.user.id;
-            const guildId = interaction.guild.id;
-
-            if (targetId === reporterId) {
-                return interaction.reply({ content: '❌ لا يمكنك طلب فحص لنفسك!', ephemeral: true });
-            }
-
-            const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
-            if (!targetMember) {
-                return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو في السيرفر!', ephemeral: true });
-            }
-            if (targetMember.user.bot) {
-                return interaction.reply({ content: '❌ لا يمكنك الإبلاغ عن بوت!', ephemeral: true });
-            }
-
-            const stats = await getUserStats(reporterId, guildId);
-            if ((stats.points || 0) < 50) {
-                return interaction.reply({ 
-                    content: `❌ ليس لديك نقاط كافية! رصيدك الحالي هو **${stats.points || 0}** نقطة، وتحتاج إلى **50 نقطة** لطلب الفحص.`, 
-                    ephemeral: true 
-                });
-            }
-
-            const reportId = crypto.randomBytes(3).toString('hex');
-
-            // Deduct 50 points
-            db.run(`UPDATE users SET points = points - 50 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
-            await createCheckReport(reportId, guildId, reporterId, targetId, device);
-
-            const deviceFormatted = device === 'PC' ? '💻 PC' : '📱 Phone';
-            const submittedEmbed = new EmbedBuilder()
-                .setColor('#2b2d31')
-                .setAuthor({ 
-                    name: 'Request Submitted', 
-                    iconURL: 'https://cdn-icons-png.flaticon.com/512/5610/5610944.png' 
-                })
-                .setDescription(
-                    `### ✅ Check Request Submitted!\n\n` +
-                    `**Report ID:** \`${reportId}\`\n` +
-                    `**Target:** ${targetMember}\n` +
-                    `**Device:** ${deviceFormatted}\n` +
-                    `**Cost:** \`-50\` points\n\n` +
-                    `Staff will review your report soon.`
-                )
-                .setTimestamp();
-
-            await interaction.reply({ embeds: [submittedEmbed], ephemeral: true });
-
-            const adminChannel = interaction.guild.channels.cache.find(c => 
-                c.name === 'check-services' || c.name === 'check-place-user' || c.name === 'reports' || c.name === 'staff-logs'
-            ) || interaction.channel;
-
-            const adminEmbed = new EmbedBuilder()
-                .setColor('#ffaa00')
-                .setTitle('🚨 Player Check Request 🚨')
-                .setDescription(
-                    `**Report ID:** \`${reportId}\`\n` +
-                    `**Target:** ${targetMember} (\`${targetId}\`)\n` +
-                    `**Device:** ${deviceFormatted}\n` +
-                    `**Requested by:** ${interaction.user} (\`${reporterId}\`)\n` +
-                    `**Cost:** \`50\` points paid\n` +
-                    `**Status:** ⏳ \`Pending Review\``
-                )
-                .setFooter({ text: 'Apostado Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
-                .setTimestamp();
-
-            const adminActionRow = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId(`check_clean_${reportId}`).setLabel('Clean').setStyle(ButtonStyle.Success).setEmoji('🟢'),
-                new ButtonBuilder().setCustomId(`check_cheater_${reportId}`).setLabel('Cheater').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
-                new ButtonBuilder().setCustomId(`check_cancel_${reportId}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary).setEmoji('❌')
-            );
-
-            await adminChannel.send({ 
-                content: `📢 **تنبيه إداري جديد:** ${interaction.user} قام بالإبلاغ عن لاعب للفحص!`, 
-                embeds: [adminEmbed], 
-                components: [adminActionRow] 
-            });
-
-            return;
+            return processCheckSubmission(interaction, targetId, device);
         }
 
     } catch (err) {
