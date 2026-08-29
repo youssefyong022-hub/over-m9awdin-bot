@@ -29,6 +29,7 @@ const {
     AttachmentBuilder,
     ChannelType
 } = require('discord.js');
+const crypto = require('crypto');
 const sqlite3 = require('sqlite3').verbose();
 let createCanvas, loadImage;
 let hasCanvas = false;
@@ -101,6 +102,19 @@ db.serialize(() => {
         PRIMARY KEY (userId, guildId)
     )`);
 
+    db.run(`CREATE TABLE IF NOT EXISTS reports (
+        id TEXT PRIMARY KEY,
+        guildId TEXT,
+        reporterId TEXT,
+        targetId TEXT,
+        device TEXT,
+        cost INTEGER DEFAULT 50,
+        status TEXT DEFAULT 'pending',
+        createdAt INTEGER,
+        adminId TEXT,
+        reviewedAt INTEGER
+    )`);
+
     const requiredColumns = [
         { name: 'points', type: 'INTEGER DEFAULT 1000' },
         { name: 'wins', type: 'INTEGER DEFAULT 0' },
@@ -116,6 +130,72 @@ db.serialize(() => {
         });
     });
 });
+
+// دوال مساعدة لنظام الفحص والتقارير (Player Check & Report Helpers)
+function getCheckStats(guildId) {
+    return new Promise((resolve) => {
+        db.get(`SELECT 
+            COUNT(CASE WHEN status = 'pending' THEN 1 END) as pending,
+            COUNT(CASE WHEN status = 'cheater' THEN 1 END) as cheaters,
+            COUNT(CASE WHEN status = 'clean' THEN 1 END) as clean
+            FROM reports WHERE guildId = ?`, [guildId], (err, row) => {
+            if (err || !row) return resolve({ pending: 0, cheaters: 0, clean: 0 });
+            resolve({
+                pending: row.pending || 0,
+                cheaters: row.cheaters || 0,
+                clean: row.clean || 0
+            });
+        });
+    });
+}
+
+function createCheckReport(reportId, guildId, reporterId, targetId, device) {
+    return new Promise((resolve, reject) => {
+        db.run(
+            `INSERT INTO reports (id, guildId, reporterId, targetId, device, cost, status, createdAt) VALUES (?, ?, ?, ?, ?, 50, 'pending', ?)`,
+            [reportId, guildId, reporterId, targetId, device, Date.now()],
+            (err) => {
+                if (err) return reject(err);
+                resolve();
+            }
+        );
+    });
+}
+
+function getReport(reportId) {
+    return new Promise((resolve) => {
+        db.get(`SELECT * FROM reports WHERE id = ?`, [reportId], (err, row) => {
+            if (err) return resolve(null);
+            resolve(row);
+        });
+    });
+}
+
+function updateReportStatus(reportId, status, adminId) {
+    return new Promise((resolve, reject) => {
+        db.run(
+            `UPDATE reports SET status = ?, adminId = ?, reviewedAt = ? WHERE id = ?`,
+            [status, adminId, Date.now(), reportId],
+            (err) => {
+                if (err) return reject(err);
+                resolve();
+            }
+        );
+    });
+}
+
+function getUserReports(reporterId, guildId) {
+    return new Promise((resolve) => {
+        db.all(
+            `SELECT * FROM reports WHERE reporterId = ? AND guildId = ? ORDER BY createdAt DESC LIMIT 10`,
+            [reporterId, guildId],
+            (err, rows) => {
+                if (err || !rows) return resolve([]);
+                resolve(rows);
+            }
+        );
+    });
+}
 
 // دوال البلاك ليست (Blacklist Database Functions)
 function setUserBlacklist(userId, guildId, durationMinutes, reason = 'مخالفة القوانين') {
@@ -1291,10 +1371,11 @@ client.on('interactionCreate', async interaction => {
                     return interaction.reply({ content: '❌ ليس لديك صلاحية لاستخدام هذا الأمر!', ephemeral: true });
                 }
                 const targetChannel = interaction.options.getChannel('channel');
+                const stats = await getCheckStats(interaction.guild.id);
                 const v2CheckerEmbed = new EmbedBuilder()
                     .setColor('#2f3136')
                     .setTitle('Player Check System')
-                    .setDescription('Report suspicious players for verification\n\n🚨 **How it works:**\n• Click **Check a user** → @tag a **server member**\n• Choose if they play on **Phone** or **PC**\n• Pay **50 points** to request a check\n• If the player is a **cheater** → Your **50 points** are recovered and you get **+20 points** 🤌\n• If the player is **clean** → You lose **30 points**\n\nStats:\n> Pending: `' + checkStats.pending + '` | Cheaters Found: `' + checkStats.cheaters + '` | Clean: `' + checkStats.clean + '`')
+                    .setDescription('Report suspicious players for verification\n\n🚨 **How it works:**\n• Click **Check a user** → @tag a **server member**\n• Choose if they play on **Phone** or **PC**\n• Pay **50 points** to request a check\n• If the player is a **cheater** → Your **50 points** are recovered and you get **+20 points** 🤌\n• If the player is **clean** → You lose **30 points**\n\nStats:\n> Pending: `' + stats.pending + '` | Cheaters Found: `' + stats.cheaters + '` | Clean: `' + stats.clean + '`')
                     .setFooter({ text: 'Apostado Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
                     .setTimestamp();
                 const v2CheckerRow = new ActionRowBuilder().addComponents(
@@ -1623,83 +1704,154 @@ client.on('interactionCreate', async interaction => {
             }
 
             if (customId === 'open_checker_interactive') {
-                activeCheckSessions.set(interaction.user.id, { suspectId: null, platform: null });
-                const panelEmbed = new EmbedBuilder()
-                    .setColor('#2f3136')
-                    .setTitle('New Player Check')
-                    .setDescription('Search And Pick The Player, Choose Their Device, Then Send The Request To The Check Room.');
-                const userSelect = new UserSelectMenuBuilder()
-                    .setCustomId('select_suspect_user')
-                    .setPlaceholder('Search & pick the player to check...')
-                    .setMinValues(1)
-                    .setMaxValues(1);
-                const platformSelect = new StringSelectMenuBuilder()
-                    .setCustomId('select_suspect_platform')
-                    .setPlaceholder('Select device: PC or Phone')
-                    .addOptions([
-                        { label: 'PC', description: 'Plays on PC', value: 'PC', emoji: '💻' },
-                        { label: 'Phone', description: 'Plays on Phone / Mobile', value: 'Phone', emoji: '📱' }
-                    ]);
-                const submitButton = new ButtonBuilder()
-                    .setCustomId('submit_final_check')
-                    .setLabel('Send Check')
-                    .setStyle(ButtonStyle.Primary)
-                    .setEmoji('🚀');
+                const deviceRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('check_select_device_pc').setLabel('PC').setStyle(ButtonStyle.Secondary).setEmoji('💻'),
+                    new ButtonBuilder().setCustomId('check_select_device_phone').setLabel('Phone').setStyle(ButtonStyle.Secondary).setEmoji('📱')
+                );
                 return interaction.reply({
-                    embeds: [panelEmbed],
-                    components: [
-                        new ActionRowBuilder().addComponents(userSelect),
-                        new ActionRowBuilder().addComponents(platformSelect),
-                        new ActionRowBuilder().addComponents(submitButton)
-                    ],
+                    content: '**Choose the device / platform the suspect is playing on:**',
+                    components: [deviceRow],
                     ephemeral: true
                 });
             }
 
+            if (customId === 'check_select_device_pc' || customId === 'check_select_device_phone') {
+                const device = customId === 'check_select_device_pc' ? 'PC' : 'Phone';
+                const userSelect = new UserSelectMenuBuilder()
+                    .setCustomId(`submit_check_target_${device}`)
+                    .setPlaceholder('Select the player to check...')
+                    .setMinValues(1)
+                    .setMaxValues(1);
+                const selectRow = new ActionRowBuilder().addComponents(userSelect);
+                return interaction.update({
+                    content: 'Select the player to check\nUse @tag to pick a member. They must be in this server.',
+                    embeds: [],
+                    components: [selectRow]
+                });
+            }
+
             if (customId === 'view_my_reports') {
-                return interaction.reply({ content: `📋 **سجل تقاريرك:** ليس لديك أي بلاغات سابقة حتى الآن.`, ephemeral: true });
-            }
-
-            if (customId === 'submit_final_check') {
-                const session = activeCheckSessions.get(interaction.user.id);
-                if (!session || !session.suspectId || !session.platform) {
-                    return interaction.reply({ content: '❌ يجب عليك اختيار اللاعب أولاً وتحديد المنصة (PC أو Phone)!', ephemeral: true });
+                const reports = await getUserReports(interaction.user.id, interaction.guild.id);
+                if (!reports || reports.length === 0) {
+                    return interaction.reply({ content: `📋 **سجل تقاريرك:** ليس لديك أي بلاغات سابقة حتى الآن.`, ephemeral: true });
                 }
-                const suspectMember = await interaction.guild.members.fetch(session.suspectId).catch(() => null);
-                const suspectName = suspectMember ? suspectMember.displayName : 'Unknown User';
-                checkStats.pending += 1;
-                const adminChannel = interaction.guild.channels.cache.find(c => c.name === 'check-services' || c.name === 'check-place-user') || interaction.channel;
-                const reportEmbed = new EmbedBuilder()
-                    .setColor('#ffaa00')
-                    .setTitle('🚨 Player Check Request 🚨')
-                    .setDescription(`**Player:** ${suspectName}  ·  \`${session.suspectId}\`\n**Device:** ${session.platform}\n**Requested by:** ${interaction.user}`)
-                    .setFooter({ text: 'Apostado Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
+
+                const desc = reports.map((r, i) => {
+                    let statusLabel = '⏳ Pending';
+                    if (r.status === 'cheater') statusLabel = '🔴 Cheater (+20 pts)';
+                    else if (r.status === 'clean') statusLabel = '🟢 Clean (-30 pts)';
+                    else if (r.status === 'cancelled') statusLabel = '❌ Cancelled (Refunded)';
+                    
+                    const dev = r.device === 'PC' ? '💻 PC' : '📱 Phone';
+                    const time = `<t:${Math.floor(r.createdAt / 1000)}:R>`;
+                    return `**#${i + 1}** • ID: \`${r.id}\` | Target: <@${r.targetId}>\n> **Device:** ${dev} | **Status:** ${statusLabel}\n> **Date:** ${time}`;
+                }).join('\n\n');
+
+                const historyEmbed = new EmbedBuilder()
+                    .setColor('#2b2d31')
+                    .setTitle('📋 Check Reports History')
+                    .setDescription(desc)
+                    .setFooter({ text: `${interaction.guild.name} • Anti-Cheat Division` })
                     .setTimestamp();
-                const adminActionRow = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('check_clean').setLabel('Clean').setStyle(ButtonStyle.Success).setEmoji('🟢'),
-                    new ButtonBuilder().setCustomId('check_cheater').setLabel('Cheater').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
-                    new ButtonBuilder().setCustomId('check_cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary).setEmoji('❌')
-                );
-                await adminChannel.send({ content: `📢 **تنبيه إداري جديد:** ${interaction.user} قام بالإبلاغ عن لاعب!`, embeds: [reportEmbed], components: [adminActionRow] });
-                activeCheckSessions.delete(interaction.user.id);
-                return interaction.update({ content: `🛡️ **تم إرسال بلاغ الفحص بنجاح إلى الإدارة!**`, embeds: [], components: [] });
+
+                return interaction.reply({ embeds: [historyEmbed], ephemeral: true });
             }
 
-            if (['check_clean', 'check_cheater', 'check_cancel'].includes(customId)) {
-                if (!interaction.member.permissions.has('Administrator')) {
-                    return interaction.reply({ content: '❌ هذه الأزرار مخصصة للإدارة فقط!', ephemeral: true });
+            if (customId.startsWith('check_clean') || customId.startsWith('check_cheater') || customId.startsWith('check_cancel')) {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild) && !interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: '❌ هذه الأزرار مخصصة لطاقم الإدارة فقط!', ephemeral: true });
                 }
-                if (customId === 'check_clean') {
-                    checkStats.clean += 1;
-                    checkStats.pending = Math.max(0, checkStats.pending - 1);
-                    return interaction.update({ content: `🟢 **تم تحديد الحالة بواسطة ${interaction.user}: اللاعب نظيف (Clean)!**`, components: [] });
-                } else if (customId === 'check_cheater') {
-                    checkStats.cheaters += 1;
-                    checkStats.pending = Math.max(0, checkStats.pending - 1);
-                    return interaction.update({ content: `🔴 **تم تحديد الحالة بواسطة ${interaction.user}: ثبت أنه غشاش (Cheater)!**`, components: [] });
-                } else if (customId === 'check_cancel') {
-                    checkStats.pending = Math.max(0, checkStats.pending - 1);
-                    return interaction.update({ content: `❌ **تم إلغاء البلاغ بواسطة ${interaction.user}.**`, components: [] });
+
+                const parts = customId.split('_');
+                const action = parts[1]; // 'clean', 'cheater', 'cancel'
+                const reportId = parts[2];
+
+                if (!reportId) {
+                    return interaction.update({ content: `✅ **تم تحديث حالة البلاغ بواسطة ${interaction.user}.**`, components: [] });
+                }
+
+                const report = await getReport(reportId);
+                if (!report) {
+                    return interaction.reply({ content: '❌ لم يتم العثور على هذا البلاغ في قاعدة البيانات.', ephemeral: true });
+                }
+
+                if (report.status !== 'pending') {
+                    return interaction.reply({ content: `⚠️ هذا البلاغ تمت معالجته بالفعل وحالته الحالية: **${report.status.toUpperCase()}**`, ephemeral: true });
+                }
+
+                const guildId = interaction.guild.id;
+                const reporterId = report.reporterId;
+                const targetId = report.targetId;
+
+                if (action === 'cheater') {
+                    await updateReportStatus(reportId, 'cheater', interaction.user.id);
+                    db.run(`UPDATE users SET points = points + 70 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+
+                    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+                        .setColor('#ff0033')
+                        .setTitle('🚨 Player Check Request - CHEATER CONFIRMED 🔴')
+                        .addFields(
+                            { name: '⚖️ Staff Verdict', value: `🔴 **Cheater (Confirmed)** by ${interaction.user}`, inline: false },
+                            { name: '💰 Points Reward', value: `Reporter awarded **+20 points** (+50 cost refunded = +70 pts total)`, inline: false }
+                        );
+
+                    await interaction.update({ embeds: [updatedEmbed], components: [] });
+
+                    try {
+                        const reporterUser = await client.users.fetch(reporterId);
+                        if (reporterUser) {
+                            await reporterUser.send({
+                                content: `🎉 **Check Report Update!**\nYour report \`${reportId}\` on <@${targetId}> was confirmed as **CHEATER** by staff!\nYou have received your **50 points back + 20 bonus points** (Total: **+70 points** 🤌).`
+                            });
+                        }
+                    } catch (e) {}
+                    return;
+                } else if (action === 'clean') {
+                    await updateReportStatus(reportId, 'clean', interaction.user.id);
+                    db.run(`UPDATE users SET points = points + 20 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+
+                    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+                        .setColor('#00ff88')
+                        .setTitle('🛡️ Player Check Request - CLEAN PLAYER 🟢')
+                        .addFields(
+                            { name: '⚖️ Staff Verdict', value: `🟢 **Clean Player** verified by ${interaction.user}`, inline: false },
+                            { name: '💰 Points Cost', value: `Reporter lost **30 points** (20 pts refunded from the 50 paid)`, inline: false }
+                        );
+
+                    await interaction.update({ embeds: [updatedEmbed], components: [] });
+
+                    try {
+                        const reporterUser = await client.users.fetch(reporterId);
+                        if (reporterUser) {
+                            await reporterUser.send({
+                                content: `ℹ️ **Check Report Update!**\nYour report \`${reportId}\` on <@${targetId}> was reviewed and marked as **CLEAN** by staff.\nYou lost **30 points** (20 points refunded from the 50 paid).`
+                            });
+                        }
+                    } catch (e) {}
+                    return;
+                } else if (action === 'cancel') {
+                    await updateReportStatus(reportId, 'cancelled', interaction.user.id);
+                    db.run(`UPDATE users SET points = points + 50 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+
+                    const updatedEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+                        .setColor('#888888')
+                        .setTitle('⚠️ Player Check Request - CANCELLED ❌')
+                        .addFields(
+                            { name: '⚖️ Staff Verdict', value: `❌ **Cancelled** by ${interaction.user}`, inline: false },
+                            { name: '💰 Refund', value: `Full **50 points** refunded to reporter`, inline: false }
+                        );
+
+                    await interaction.update({ embeds: [updatedEmbed], components: [] });
+
+                    try {
+                        const reporterUser = await client.users.fetch(reporterId);
+                        if (reporterUser) {
+                            await reporterUser.send({
+                                content: `⚠️ **Check Report Cancelled**\nYour report \`${reportId}\` on <@${targetId}> was cancelled by staff. Your **50 points** have been fully refunded.`
+                            });
+                        }
+                    } catch (e) {}
+                    return;
                 }
             }
         }
@@ -2140,19 +2292,90 @@ client.on('interactionCreate', async interaction => {
                 return interaction.reply({ content: '✅ تم التراجع عن الإلغاء والاستمرار في المباراة.', ephemeral: true });
             }
 
-            if (customId === 'select_suspect_platform') {
-                let session = activeCheckSessions.get(interaction.user.id) || { suspectId: null, platform: null };
-                session.platform = values[0];
-                activeCheckSessions.set(interaction.user.id, session);
-                return interaction.update({ content: `✅ تم اختيار المنصة: **${session.platform}**. اضغط الآن على Send Check لإرسال البلاغ.` });
-            }
         }
 
-        if (interaction.isUserSelectMenu() && interaction.customId === 'select_suspect_user') {
-            let session = activeCheckSessions.get(interaction.user.id) || { suspectId: null, platform: null };
-            session.suspectId = interaction.values[0];
-            activeCheckSessions.set(interaction.user.id, session);
-            return interaction.update({ content: `✅ تم اختيار اللاعب بنجاح. اختر المنصة الآن واضغط Send Check.` });
+        if (interaction.isUserSelectMenu() && interaction.customId.startsWith('submit_check_target_')) {
+            const device = interaction.customId.replace('submit_check_target_', '');
+            const targetId = interaction.values[0];
+            const reporterId = interaction.user.id;
+            const guildId = interaction.guild.id;
+
+            if (targetId === reporterId) {
+                return interaction.reply({ content: '❌ لا يمكنك طلب فحص لنفسك!', ephemeral: true });
+            }
+
+            const targetMember = await interaction.guild.members.fetch(targetId).catch(() => null);
+            if (!targetMember) {
+                return interaction.reply({ content: '❌ لم يتم العثور على هذا العضو في السيرفر!', ephemeral: true });
+            }
+            if (targetMember.user.bot) {
+                return interaction.reply({ content: '❌ لا يمكنك الإبلاغ عن بوت!', ephemeral: true });
+            }
+
+            const stats = await getUserStats(reporterId, guildId);
+            if ((stats.points || 0) < 50) {
+                return interaction.reply({ 
+                    content: `❌ ليس لديك نقاط كافية! رصيدك الحالي هو **${stats.points || 0}** نقطة، وتحتاج إلى **50 نقطة** لطلب الفحص.`, 
+                    ephemeral: true 
+                });
+            }
+
+            const reportId = crypto.randomBytes(3).toString('hex');
+
+            // Deduct 50 points
+            db.run(`UPDATE users SET points = points - 50 WHERE userId = ? AND guildId = ?`, [reporterId, guildId]);
+            await createCheckReport(reportId, guildId, reporterId, targetId, device);
+
+            const deviceFormatted = device === 'PC' ? '💻 PC' : '📱 Phone';
+            const submittedEmbed = new EmbedBuilder()
+                .setColor('#2b2d31')
+                .setAuthor({ 
+                    name: 'Request Submitted', 
+                    iconURL: 'https://cdn-icons-png.flaticon.com/512/5610/5610944.png' 
+                })
+                .setDescription(
+                    `### ✅ Check Request Submitted!\n\n` +
+                    `**Report ID:** \`${reportId}\`\n` +
+                    `**Target:** ${targetMember}\n` +
+                    `**Device:** ${deviceFormatted}\n` +
+                    `**Cost:** \`-50\` points\n\n` +
+                    `Staff will review your report soon.`
+                )
+                .setTimestamp();
+
+            await interaction.reply({ embeds: [submittedEmbed], ephemeral: true });
+
+            const adminChannel = interaction.guild.channels.cache.find(c => 
+                c.name === 'check-services' || c.name === 'check-place-user' || c.name === 'reports' || c.name === 'staff-logs'
+            ) || interaction.channel;
+
+            const adminEmbed = new EmbedBuilder()
+                .setColor('#ffaa00')
+                .setTitle('🚨 Player Check Request 🚨')
+                .setDescription(
+                    `**Report ID:** \`${reportId}\`\n` +
+                    `**Target:** ${targetMember} (\`${targetId}\`)\n` +
+                    `**Device:** ${deviceFormatted}\n` +
+                    `**Requested by:** ${interaction.user} (\`${reporterId}\`)\n` +
+                    `**Cost:** \`50\` points paid\n` +
+                    `**Status:** ⏳ \`Pending Review\``
+                )
+                .setFooter({ text: 'Apostado Anti-Cheat Division', iconURL: client.user.displayAvatarURL() })
+                .setTimestamp();
+
+            const adminActionRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder().setCustomId(`check_clean_${reportId}`).setLabel('Clean').setStyle(ButtonStyle.Success).setEmoji('🟢'),
+                new ButtonBuilder().setCustomId(`check_cheater_${reportId}`).setLabel('Cheater').setStyle(ButtonStyle.Danger).setEmoji('🔴'),
+                new ButtonBuilder().setCustomId(`check_cancel_${reportId}`).setLabel('Cancel').setStyle(ButtonStyle.Secondary).setEmoji('❌')
+            );
+
+            await adminChannel.send({ 
+                content: `📢 **تنبيه إداري جديد:** ${interaction.user} قام بالإبلاغ عن لاعب للفحص!`, 
+                embeds: [adminEmbed], 
+                components: [adminActionRow] 
+            });
+
+            return;
         }
 
     } catch (err) {
